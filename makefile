@@ -4,7 +4,7 @@ OBJS = libnetfiles.o netfileserver.o
 DEPS = libnetfiles.h
 
 all: libnetfiles netfileserver
-	rm netfileserver.o
+	rm *.o
 
 libnetfiles : $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) -o libnetfiles

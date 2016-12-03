@@ -1,5 +1,5 @@
 #include "libnetfiles.h"
 
-int main(int argc, char **argv) {
+int netopen(const char *pathname, int args) {
 	return 0;
 }
