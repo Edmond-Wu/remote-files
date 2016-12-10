@@ -3,7 +3,8 @@ CC     = gcc
 CFLAGS = -g -Wall -pedantic -ansi -pthread -std=c11
 #LFLAGS = -L/usr/lib 
 LFLAGS =  
-LIBS   = -lsocket -lpthread -lnsl
+#LIBS   = -lsocket -lpthread -lnsl
+LIBS   = -lpthread -lnsl
 
 all: netfileserver
 

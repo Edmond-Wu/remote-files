@@ -20,16 +20,15 @@
 
 
 //
-// Hard-coded port number
+// Hard-coded port number for net file server
 //
 #define PORT_NUMBER  54321  
 
 
-#define TRUE    1
-#define FALSE   0
-
-#define SUCCESS 0
-#define FAILURE -1
+//
+// Max size of the file descriptor table.  
+//
+#define FD_TABLE_SIZE   5  
 
 
 //
@@ -37,6 +36,35 @@
 // server and the client.
 //
 #define MSG_SIZE  256 
+
+
+//
+// Number of sockets available to use for file transfer
+//
+#define MAX_FILE_TRANSFER_SOCKETS   10  
+
+
+
+//
+// Net file read and write are done in multiple "chunk" 
+// of bytes each of this size.  This chunk size is also
+// used to calculate how many listener ports are needed 
+// to faciliate a net file read or write. 
+//
+//#define DATA_CHUNK_SIZE   2048  
+#define DATA_CHUNK_SIZE   20  
+
+
+
+//
+// Constant definitions
+//
+#define TRUE    1
+#define FALSE   0
+
+#define SUCCESS 0
+#define FAILURE -1
+
 
 
 //
