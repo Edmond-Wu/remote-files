@@ -1,0 +1,26 @@
+
+/////////////////////////////////////////////////////////////
+
+int findFD( NET_FD_TYPE *newFd )
+{
+    int i = 0;
+
+    //
+    // Find the given file descriptor in the file descriptor table
+    //
+    for (i=0; i < FD_TABLE_SIZE; i++) {
+        if ((strcmp(FD_Table[i].pathname, newFd->pathname) == 0) &&
+            (FD_Table[i].fcMode == newFd->fcMode) &&
+            (FD_Table[i].fileOpenFlags == newFd->fileOpenFlags)) 
+        {
+            // Found the file descriptor specified
+            return ++i;
+        }
+    }
+
+    // Cannot find the file descriptor specified
+    return -1;
+}
+
+
+/////////////////////////////////////////////////////////////
