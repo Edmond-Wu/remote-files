@@ -28,7 +28,7 @@
 //
 // Max size of the file descriptor table.  
 //
-#define FD_TABLE_SIZE   5  
+#define FD_TABLE_SIZE   32  
 
 
 //

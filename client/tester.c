@@ -639,9 +639,11 @@ int main(int argc, char *argv[])
     rc = netwrite(fd, buf, 20481);
 
     rc = netwrite(fd, buf, 3048);
+
+    rc = netwrite(fd, buf, 0);
 */
 
-    strcpy(buf, "Data for ./testdata/writeThis.txt\n");
+    strcpy(buf, "Hello Toni.  This has been a long and frustrating ordeal for three weeks!\n");
     rc = netwrite(fd, buf, strlen(buf));
 
     if (rc != FAILURE)

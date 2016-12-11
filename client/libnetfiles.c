@@ -672,10 +672,10 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
     //
     // Check input parameters
     //
-    //if ((buf == NULL) || (nbyte <= 0)) {
-//	errno = EINVAL;  // 22 = Invalid argument
-//	return FAILURE;
- //   }
+    if ((buf == NULL) || (nbyte < 0)) {
+	errno = EINVAL;  // 22 = Invalid argument
+	return FAILURE;
+    }
 
 
     if ( isNetServerInitialized( NET_CLOSE ) != TRUE ) {
@@ -687,7 +687,6 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
     //
     // Get a socket to talk to my net file server
     //
-    //sockfd = getSockfd( gNetServer.hostname );
     sockfd = getSockfd( gNetServer.hostname, PORT_NUMBER );
     if ( sockfd < 0 ) {
         // this error should not happen
@@ -707,7 +706,7 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
     bzero(msg, MSG_SIZE);
     sprintf(msg, "%d,%d,%d,0", NET_WRITE, netfd, (int)nbyte);
 
-    printf("client netwrite: send to server - \"%s\"\n", msg);
+    //printf("client netwrite: send to server - \"%s\"\n", msg);
     rc = write(sockfd, msg, strlen(msg));
     if ( rc < 0 ) {
         // Failed to write command to server
@@ -735,11 +734,10 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
         return FAILURE;
     }
 
-
     //
     // Received a response back from the server
     //
-    printf("client netwrite: received from server - \"%s\"\n", msg);
+    //printf("client netwrite: received %d-byte msg from server - \"%s\"\n", rc, msg);
 
 
     //
@@ -749,25 +747,27 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
     sscanf(msg, "%d,%d,%d,%d,%d,", &rc, &errno, &h_errno, &fd, &portCount);
     //printf("client netwrite: received portCount= %d\n", portCount);
 
-    int ports[MAX_FILE_TRANSFER_SOCKETS]; 
-    
-    int i = 0;  // Token counter
-    char* token;
-    for (token = strtok(msg, ","); token != NULL; token = strtok(NULL, ","))
-    {
-        if ( i > 4 ) {
-            ports[i-5] = atoi(token);
-            //printf("client netwrite: received ports[%d]= %d\n", i-5, ports[i-5]);
+    if ( portCount > 0 ) {
+        int ports[MAX_FILE_TRANSFER_SOCKETS]; 
+        
+        int i = 0;  // Token counter
+        char* token;
+        for (token = strtok(msg, ","); token != NULL; token = strtok(NULL, ","))
+        {
+            if ( i > 4 ) {
+                ports[i-5] = atoi(token);
+                //printf("client netwrite: received ports[%d]= %d\n", i-5, ports[i-5]);
+            }
+            i++;
         }
-        i++;
+    
+        //
+        // At this point, the server has given me "portCount" ports to 
+        // use to transmit my "nbyte" of data.  Now I need to decide
+        // how many bytes to go over each port.
+        //
+        rc = xferStrategy(netfd, (char *)buf, nbyte, portCount, ports);
     }
-
-    //
-    // At this point, the server has given me "portCount" ports to 
-    // use to transmit my "nbyte" of data.  Now I need to decide
-    // how many bytes to go over each port.
-    //
-    rc = xferStrategy(netfd, (char *)buf, nbyte, portCount, ports);
 
 
     // Read the final response from the server
@@ -783,7 +783,7 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
     //
     // Received a response back from the server
     //
-    printf("client netwrite: received from server - \"%s\"\n", msg);
+    //printf("client netwrite: received %d-byte msg from server - \"%s\"\n", rc, msg);
 
 
     long iBytesWritten = 0;
@@ -815,8 +815,9 @@ int xferStrategy(int netfd, char *buf, int nBytes, int portCount, int *ports)
     int iStartPos = 0;
     int iRemainingBytes = nBytes;
 
-    FILE_PART_TYPE part;
     pthread_t tids[portCount];
+
+    FILE_PART_TYPE part;
 
     part.netfd = netfd;
     part.buf = buf;
@@ -850,20 +851,24 @@ int xferStrategy(int netfd, char *buf, int nBytes, int portCount, int *ports)
         //
         // Spawn a thread to send one part of the data
         //
+        FILE_PART_TYPE *partArg = malloc(sizeof(FILE_PART_TYPE));
+        partArg->port = part.port;
+        partArg->netfd = part.netfd;
+        partArg->seqNum = part.seqNum;
+        partArg->buf = part.buf;
+        partArg->iStartPos = part.iStartPos;
+        partArg->iLength = part.iLength;
 
-        pthread_create(&tids[seqNum-1], NULL, &sendData, &part );
-
-sleep(1);
-
+        pthread_create(&tids[seqNum-1], NULL, &sendData, partArg );
     }
 
 
     // wait for all spawned threads to finish
     int i;
     for (i=0; i < portCount; i++) {
-        printf("client netwrite: xferStrategy: waiting for thread %d to finish\n", (int)tids[i]);
+        //printf("client netwrite: xferStrategy: waiting for thread %d to finish\n", (int)tids[i]);
         pthread_join(tids[i], NULL);
-        printf("client netwrite: xferStrategy: thread %d finished\n", (int)tids[i]);
+        //printf("client netwrite: xferStrategy: thread %d finished\n", (int)tids[i]);
     }
 
     return 0;
@@ -873,21 +878,30 @@ sleep(1);
 
 void *sendData( void *filePart )
 {
-    FILE_PART_TYPE *part = (FILE_PART_TYPE *)filePart;
     int rc = FAILURE;
+    FILE_PART_TYPE part;
 
 
-    pthread_detach( (int)pthread_self() );
+    pthread_detach( pthread_self() );
 
-    //printf("client netwrite: sendData thread %d: Part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
-    //         (int)pthread_self(), part->port, part->netfd, part->seqNum, part->iStartPos, part->iLength);
+    part.port      = ((FILE_PART_TYPE *)filePart)->port;
+    part.netfd     = ((FILE_PART_TYPE *)filePart)->netfd;
+    part.seqNum    = ((FILE_PART_TYPE *)filePart)->seqNum;
+    part.buf       = ((FILE_PART_TYPE *)filePart)->buf;
+    part.iStartPos = ((FILE_PART_TYPE *)filePart)->iStartPos;
+    part.iLength   = ((FILE_PART_TYPE *)filePart)->iLength;
+
+    free(filePart);
+
+    //printf("client netwrite: sendData thread %ld: Part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
+    //         pthread_self(), part.port, part.netfd, part.seqNum, part.iStartPos, part.iLength);
 
 
     // 
     // Create a new socket with the given port number to talk to the server
     //
     int sockfd = -1;
-    sockfd = getSockfd( gNetServer.hostname, part->port);
+    sockfd = getSockfd( gNetServer.hostname, part.port);
     if ( sockfd < 0 ) {
         // this error should not happen
         errno = 0;
@@ -897,8 +911,8 @@ void *sendData( void *filePart )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("client netwrite: sendData thread %d: sockfd= %d, port= %d\n", 
-              (int)pthread_self(), sockfd, part->port);
+    //printf("client netwrite: sendData thread %d: sockfd= %d, port= %d\n", 
+    //          (int)pthread_self(), sockfd, part.port);
 
 
 
@@ -909,9 +923,9 @@ void *sendData( void *filePart )
     //
     char msg[MSG_SIZE] = "";
     bzero(msg, MSG_SIZE);
-    sprintf(msg, "%d,%d,%d,%d", NET_WRITE, part->netfd, part->seqNum, part->iLength);
+    sprintf(msg, "%d,%d,%d,%d", NET_WRITE, part.netfd, part.seqNum, part.iLength);
 
-    printf("client netwrite: sendData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
+    //printf("client netwrite: sendData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
     rc = write(sockfd, msg, strlen(msg));
     if ( rc < 0 ) {
         // Failed to write command to server
@@ -935,7 +949,7 @@ void *sendData( void *filePart )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("client netwrite: sendData thread %d: received from server - \"%s\"\n",(int)pthread_self(),msg);
+    //printf("client netwrite: sendData thread %d: received from server - \"%s\"\n",(int)pthread_self(),msg);
 
 
 
@@ -945,10 +959,10 @@ void *sendData( void *filePart )
 
 //char sTemp[4096] = "";
 //bzero(sTemp, 4096);
-//strncpy(sTemp, &(part->buf[part->iStartPos]), part->iLength);
+//strncpy(sTemp, &(part.buf[part.iStartPos]), part.iLength);
 //printf("client netwrite: data= \"%s\"\n", sTemp);
  
-    rc = write(sockfd, &(part->buf[part->iStartPos]), part->iLength);
+    rc = write(sockfd, &(part.buf[part.iStartPos]), part.iLength);
     if ( rc < 0 ) {
         // Failed to write data to server
         fprintf(stderr, "client netwrite: sendData failed to write data to server.  rc= %d\n", rc);
@@ -956,8 +970,8 @@ void *sendData( void *filePart )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("client netwrite: sendData thread %d: send %d bytes of data to server\n",
-              (int)pthread_self(),rc);
+    //printf("client netwrite: sendData thread %d: send %d bytes of data to server\n",
+    //          (int)pthread_self(),rc);
 
 
     //
@@ -974,7 +988,7 @@ void *sendData( void *filePart )
         pthread_exit( &rc );
     }
 
-    printf("client netwrite: sendData thread %d: received from server - \"%s\"\n",(int)pthread_self(),msg);
+    //printf("client netwrite: sendData thread %d: received from server - \"%s\"\n",(int)pthread_self(),msg);
 
     int nBytes = 0;
     sscanf(msg, "%d,%d,%d,%d", &rc, &errno, &h_errno, &nBytes);

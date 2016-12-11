@@ -46,13 +46,37 @@ typedef struct {
 void initialize();
 static void sig_handler( const int signo );
 static void SetupSignals();
+int getSockfd( const int port ); // create a socket binded to a port
+int findOpenPorts();
+
+
+// 
+// Functions for processing commands sent by client
+// 
 void *ProcessNetCmd( void *newSocket_FD );
+
+
+// 
+// Functions for processing "netopen"
+// 
 int Do_netopen( NET_FD_TYPE *netFd );
-int Do_netwrite( int nBytes, pthread_t *pTids, int *portCount, char *portList );
-int getSockfd( const int port );
+
+
+// 
+// Functions for processing "netwrite"
+// 
+int Do_netwrite( const int nBytes, pthread_t *pTids, int *portCount, char *portList );
 void *netwriteListener( void *sockfd );
 int savePartfile( int netfd, int seqNum, char *data, int nBytes);
 int reconstruct( const int netfd, const int parts);
+
+
+// 
+// Functions for processing "netread"
+// 
+int Do_netread( const int nBytes, pthread_t *pTids, int *portCount, char *portList );
+void *netreadListener( void *sockfd );
+char * readFileData( const int netfd, const int iStartPos, const int nBytes);
 
 
 //
@@ -61,9 +85,16 @@ int reconstruct( const int netfd, const int parts);
 int findFD( NET_FD_TYPE *netFd );
 int createFD( NET_FD_TYPE *netFd );
 int deleteFD( int fd );
-void printFDtable();
-int canOpen( NET_FD_TYPE *netFd );
 NET_FD_TYPE *LookupFDTable( const int netfd );
+void printFDtable();
+
+
+//
+// Utility functions for "netfd" permission checks
+//
+int canOpen( NET_FD_TYPE *netFd );
+int canWrite( const int netfd, const int nBytes);
+int canRead( const int netfd, const int nBytes);
 
 
 
@@ -73,8 +104,6 @@ NET_FD_TYPE *LookupFDTable( const int netfd );
 //
 /////////////////////////////////////////////////////////////
 
-//static int  bTerminate = FALSE;
-//static pthread_t HB_thread_ID = 0;
 int  bTerminate = FALSE;
 pthread_t HB_thread_ID = 0;
 
@@ -82,13 +111,8 @@ pthread_t HB_thread_ID = 0;
 //
 // Here is my net file descriptor table
 //
-NET_FD_TYPE FD_Table[ FD_TABLE_SIZE ];
+NET_FD_TYPE   FD_Table[ FD_TABLE_SIZE ];
 
-
-//
-// An array of sockets used for net file transfer
-//
-//FILE_TRANSFER_SOCKET_TYPE  xferSock[ MAX_FILE_TRANSFER_SOCKETS ];
 
 
 
@@ -235,19 +259,11 @@ int main(int argc, char *argv[])
 //        SetAlarm( HEART_BEAT_TIME );  // Reset the heart beat timer
     };
 
-
     if ( newsockfd != 0 ) close(newsockfd);
     if ( sockfd != 0 ) close(sockfd);
 
-//    for (i=0; i < MAX_FILE_TRANSFER_SOCKETS; i++) {
-//        close( xferSock[i].sockfd );
-//
-//        //printf("netfileserver: closed xferSock[%d].sockfd= %d, port= %d\n",
-//        //        i, xferSock[i].sockfd, xferSock[i].port);
-//    }
 
     printf("netfileserver: terminated\n");
-
 }
 
 
@@ -372,8 +388,15 @@ void *ProcessNetCmd( void *newSocket_FD )
     char myThreadLabel[64] = "";
     NET_FUNCTION_TYPE netFunc = INVALID;
 
-    sprintf(myThreadLabel, "netfileserver: ProcessNetCmd %ld,", pthread_self());
+    int portCount = 0;
+    char portList[128] = "";
 
+    // An array of spawned thread ID's
+    pthread_t   pTids[MAX_FILE_TRANSFER_SOCKETS];
+
+
+
+    sprintf(myThreadLabel, "netfileserver: ProcessNetCmd %ld,", pthread_self());
 
     //printf("%s PID= %d\n",myThreadLabel, (int)getpid());
 
@@ -456,166 +479,292 @@ void *ProcessNetCmd( void *newSocket_FD )
         case NET_READ:
             //printf("%s received \"netread\"\n", myThreadLabel);
 
-            //printf("%s responded \"%s\"\n", myThreadLabel, msg);
-            break;
-
-        case NET_WRITE:
-            //printf("%s received \"netwrite\"\n", myThreadLabel);
-
             //
             // Incoming message format is:
-            //     4,netfd,nBytes,0
+            //     3,netfd,nBytes,0
             //
             sscanf(msg, "%u,%d,%d", &netFunc, &netfd, &nBytes);
 
+            // Set up initial conditions
+            portCount = 0;
+            strcpy(portList,"0");
+            filePartsCount = 0;
 
             //
-            // Check if this netfd is opened for O_RDONLY
+            // Check if reading is allowed for this "netfd"
             //
-            int portCount = 0;
-            char portList[128] = "";
-            pthread_t pTids[MAX_FILE_TRANSFER_SOCKETS];
+            rc = canRead(netfd, nBytes);
 
-            NET_FD_TYPE *pFD = LookupFDTable(netfd);
-            if ( pFD == NULL ) {
-                // There is no such netfd in my file
-                // descriptor table.
-                errno = EBADF;
-                rc = FAILURE;
-            }
+            if (rc == SUCCESS) {
+                    //
+                    // Call the "Do_netread" function.  This function will
+                    // spawn one or more netreadListener thread(s) to
+                    // handle file read in multiple parts each with a
+                    // sequence number.  It will return the total number of
+                    // of file parts that will be created.  We need this
+                    // parts count to reconstruct the final data read.
+                    //
+                    filePartsCount  = Do_netread(nBytes, pTids, &portCount, portList);
 
-            if ((rc != FAILURE) && (pFD->fileOpenFlags == O_RDONLY)) {
-                // This netfd is opened for read-only mode
-                errno = EACCES;
-                rc = FAILURE;
-            }
+                    rc = SUCCESS;
+                    if ( filePartsCount == FAILURE )  rc = FAILURE;
 
-            if (rc != FAILURE) {
-                //
-                // Call the "Do_netwrite" function.  This function will
-                // spawn one or more netwriteListener thread(s) to
-                // handle file write in multiple parts each with a
-                // sequence number.  It will return the total number of
-                // of file parts that will be created.  We need this
-                // parts count to reconstruct the final data file.
-                //
-                filePartsCount = Do_netwrite(nBytes, pTids, &portCount, portList);
-                //printf("%s Do_netwrite returns filePartsCount= %d\n", myThreadLabel, filePartsCount);
+	            printf("%s Do_netread returns filePartsCount= %d\n", myThreadLabel, filePartsCount);
 
 
-//int j;
-//for (j=0; j<10; j++) {
-//    printf("%s After Do_netwrite, pTids[%d]= %ld\n", myThreadLabel, j, pTids[j]);
-//}
-
-            }
-
-
-            //
-            // Compose a response configuration message.  This message
-            // tells the client how to do the net file write in one or
-            // more smaller parts.  The format is:
-            //
-            //    result,errno,h_errno,netFd,portCount,portList
-            //
-            if ( rc == FAILURE  ) {
-                sprintf(msg, "%d,%d,%d,%d,%d,%s", FAILURE, errno, h_errno, netfd, portCount, portList);
-            }
-            else {
-                sprintf(msg, "%d,%d,%d,%d,%d,%s", SUCCESS, errno, h_errno, netfd, portCount, portList);
-            }
-            printf("%s responded \"%s\"\n", myThreadLabel, msg);
-
-            //
-            // Send my configuration response back to the client
-            //
-            rc = write(*sockfd, msg, strlen(msg) );
-            if ( rc < 0 ) {
-                fprintf(stderr,"%s fails to write to socket\n", myThreadLabel);
-            }
+	            //int j;
+	            //for (j=0; j<10; j++) {
+	            //    printf("%s After Do_netwrite, pTids[%d]= %ld\n", myThreadLabel, j, pTids[j]);
+	            //}
+	    }
 
 
+	    //
+	    // Compose a response configuration message.  This message
+	    // tells the client how to do the net file read in one or
+	    // more smaller parts.  The format is:
+	    //
+	    //    result,errno,h_errno,netFd,portCount,portList
+	    //
+	    bzero(msg, MSG_SIZE);
+	    if ( rc == FAILURE  ) {
+		sprintf(msg, "%d,%d,%d,%d,0,0", FAILURE, errno, h_errno, netfd);
+	    }
+	    else {
+		if ( filePartsCount == 0 ) {
+		    sprintf(msg, "%d,%d,%d,%d,0,0", SUCCESS, errno, h_errno, netfd);
+		}
+		else {
+		    sprintf(msg, "%d,%d,%d,%d,%d,%s", SUCCESS, errno, h_errno, netfd, portCount, portList);
+		}
+	    }
+	    printf("%s responded \"%s\", length= %d\n", myThreadLabel, msg, (int)strlen(msg));
+
+	    //
+	    // Send my configuration response back to the client
+	    //
+	    rc = write(*sockfd, msg, strlen(msg) );
+	    if ( rc < 0 ) {
+		fprintf(stderr,"%s fails to write config msg to socket\n", myThreadLabel);
+		if ( *sockfd != 0 ) close(*sockfd);
+		pthread_exit( NULL );
+	    }
 
 
-            // Wait for all spawned netwriteListener threads to finish
-            int i;
-            for (i=0; i < portCount; i++) {
-                printf("%s waiting for netwriteListener thread %ld\n", myThreadLabel, pTids[i]);
-                pthread_join(pTids[i], NULL);
-                printf("%s netwriteListener thread %ld finished\n", myThreadLabel, pTids[i]);
-            }
+	    //
+	    // At this point, I have all my netreadListener threads spawned
+	    // and ready to receive communications from the client.
+	    //
+	    nBytes = FAILURE;
+
+	    if ( filePartsCount > 0 ) {
+		// Wait for all spawned netreadListener threads to finish
+		int i;
+		for (i=0; i < filePartsCount; i++) {
+		    //printf("%s waiting for netreadListener thread %ld\n", myThreadLabel, pTids[i]);
+		    pthread_join(pTids[i], NULL);
+		    //printf("%s netreadListener thread %ld finished\n", myThreadLabel, pTids[i]);
+		}
 
 
-            // TODO: Reconstruct the written file from all the piece parts
-            nBytes = reconstruct( netfd, filePartsCount); // Total bytes written
-            printf("%s netwriteListener: reconstruct returns %d bytes\n", myThreadLabel, nBytes);
-            rc = SUCCESS;
+		// TODO: calculate the total bytes send to the client
+		//
+		nBytes = 0;
+		rc = SUCCESS;
+		printf("%s netwriteListener: %d bytes sent to client\n", myThreadLabel, nBytes);
+	    }
 
 
-            //
-            // Compose my final response message.  The format is:
-            //
-            //    result,errno,h_errno,nBytes
-            //
-            if ( rc == FAILURE  ) {
-                sprintf(msg, "%d,%d,%d,%d", FAILURE, errno, h_errno, FAILURE);
-            }
-            else {
-                sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, nBytes);
-            }
-            printf("%s responded \"%s\"\n", myThreadLabel, msg);
-            break;
-
-        case NET_CLOSE:
-            //printf("%s received \"netclose\"\n", myThreadLabel);
-
-            //
-            // Incoming message format is:
-            //     5,netfd,0,0
-            //
-            sscanf(msg, "%u,%d", &netFunc, &netfd);
+	    //
+	    // Compose my final response message.  The format is:
+	    //
+	    //    result,errno,h_errno,nBytes
+	    //
+	    if ( nBytes == FAILURE  ) {
+		sprintf(msg, "%d,%d,%d,%d", FAILURE, errno, h_errno, FAILURE);
+	    }
+	    else {
+		sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, nBytes);
+	    }
+	    printf("%s responded \"%s\"\n", myThreadLabel, msg);
+	    break;
 
 
-            //
-            // On success, "deleteFD" returns the file descriptor
-            // that was closed.  Otherwise, it will return a "-1".
-            //
-            //printf("%s trying to delete netfd %d\n", myThreadLabel, netfd);
-            rc = deleteFD( netfd );
-            //printf("%s deleteFD returns %d\n", myThreadLabel, rc);
+	case NET_WRITE:
+	    //printf("%s received \"netwrite\"\n", myThreadLabel);
+
+	    //
+	    // Incoming message format is:
+	    //     4,netfd,nBytes,0
+	    //
+	    sscanf(msg, "%u,%d,%d", &netFunc, &netfd, &nBytes);
 
 
-            //
-            // Compose a response message.  The format is:
-            //
-            //    result,errno,h_errno,netFd
-            //
-            if ( rc == FAILURE  ) {
-                sprintf(msg, "%d,%d,%d,%d", FAILURE, errno, h_errno, FAILURE);
-            }
-            else {
-                sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, rc);
-            }
-            //printf("%s responded \"%s\"\n", myThreadLabel, msg);
+	    //
+	    // Check if writing is allowed for this "netfd"
+	    //
+	    rc = canWrite(netfd, nBytes);
 
-            break;
+	    if (rc == SUCCESS) {
+		if (nBytes > 0) {
+		    //
+		    // Call the "Do_netwrite" function.  This function will
+		    // spawn one or more netwriteListener thread(s) to
+		    // handle file write in multiple parts each with a
+		    // sequence number.  It will return the total number of
+		    // of file parts that will be created.  We need this
+		    // parts count to reconstruct the final data file.
+		    //
+		    filePartsCount  = Do_netwrite(nBytes, pTids, &portCount, portList);
 
-        case INVALID:
-        default:
-            printf("%s received invalid net function\n", myThreadLabel);
+		    rc = SUCCESS;
+		    if ( filePartsCount == FAILURE )  rc = FAILURE;
 
-            //printf("%s responded \"%s\"\n", myThreadLabel, msg);
-            break;
+		    //printf("%s Do_netwrite returns filePartsCount= %d\n", myThreadLabel, filePartsCount);
+
+
+	//int j;
+	//for (j=0; j<10; j++) {
+	//    printf("%s After Do_netwrite, pTids[%d]= %ld\n", myThreadLabel, j, pTids[j]);
+	//}
+
+		}
+		else {
+		    //
+		    // create an empty file.  
+		    //
+		    NET_FD_TYPE *pFD = LookupFDTable(netfd);
+		    FILE *fp = fopen(pFD->pathname,"w");
+		    if ( fp == NULL ) {
+			// Fail to open the temp file
+			fprintf(stderr,"%s fails to create \"%s\", errno= %d\n",myThreadLabel,pFD->pathname,errno);
+			rc = FAILURE;
+		    }
+
+		    if ( fp != NULL ) fclose(fp);
+		    filePartsCount = 0;
+		    portCount = 0;
+		    sprintf(portList, "%d", portCount);
+		    rc = SUCCESS;
+		} 
+	    }  // Execute the netwrite function
+
+	    //
+	    // Compose a response configuration message.  This message
+	    // tells the client how to do the net file write in one or
+	    // more smaller parts.  The format is:
+	    //
+	    //    result,errno,h_errno,netFd,portCount,portList
+	    //
+	    bzero(msg, MSG_SIZE);
+	    if ( rc == FAILURE  ) {
+		sprintf(msg, "%d,%d,%d,%d,0,0", FAILURE, errno, h_errno, netfd);
+	    }
+	    else {
+		if ( filePartsCount == 0 ) {
+		    sprintf(msg, "%d,%d,%d,%d,0,0", SUCCESS, errno, h_errno, netfd);
+		}
+		else {
+		    sprintf(msg, "%d,%d,%d,%d,%d,%s", SUCCESS, errno, h_errno, netfd, portCount, portList);
+		}
+	    }
+	    //printf("%s responded \"%s\", length= %d\n", myThreadLabel, msg, (int)strlen(msg));
+
+	    //
+	    // Send my configuration response back to the client
+	    //
+	    rc = write(*sockfd, msg, strlen(msg) );
+	    if ( rc < 0 ) {
+		fprintf(stderr,"%s fails to write config msg to socket\n", myThreadLabel);
+		if ( *sockfd != 0 ) close(*sockfd);
+		pthread_exit( NULL );
+	    }
+
+
+	    if ( filePartsCount > 0 ) {
+		// Wait for all spawned netwriteListener threads to finish
+		int i;
+		for (i=0; i < filePartsCount; i++) {
+		    //printf("%s waiting for netwriteListener thread %ld\n", myThreadLabel, pTids[i]);
+		    pthread_join(pTids[i], NULL);
+		    //printf("%s netwriteListener thread %ld finished\n", myThreadLabel, pTids[i]);
+		}
+
+
+		//
+		// Reconstruct the written file from all the piece parts
+		//
+		nBytes = reconstruct( netfd, filePartsCount); // Total bytes written
+		//printf("%s netwriteListener: reconstruct returns %d bytes\n", myThreadLabel, nBytes);
+		rc = SUCCESS;
+	    }
+
+
+	    //
+	    // Compose my final response message.  The format is:
+	    //
+	    //    result,errno,h_errno,nBytes
+	    //
+	    if ( nBytes == FAILURE  ) {
+		sprintf(msg, "%d,%d,%d,%d", FAILURE, errno, h_errno, FAILURE);
+	    }
+	    else {
+		sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, nBytes);
+	    }
+	    //printf("%s responded \"%s\"\n", myThreadLabel, msg);
+	    break;
+
+	case NET_CLOSE:
+	    //printf("%s received \"netclose\"\n", myThreadLabel);
+
+	    //
+	    // Incoming message format is:
+	    //     5,netfd,0,0
+	    //
+	    sscanf(msg, "%u,%d", &netFunc, &netfd);
+
+
+	    //
+	    // On success, "deleteFD" returns the file descriptor
+	    // that was closed.  Otherwise, it will return a "-1".
+	    //
+	    //printf("%s trying to delete netfd %d\n", myThreadLabel, netfd);
+	    rc = deleteFD( netfd );
+	    //printf("%s deleteFD returns %d\n", myThreadLabel, rc);
+
+
+	    //
+	    // Compose a response message.  The format is:
+	    //
+	    //    result,errno,h_errno,netFd
+	    //
+	    if ( rc == FAILURE  ) {
+		sprintf(msg, "%d,%d,%d,0", FAILURE, errno, h_errno);
+	    }
+	    else {
+		sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, rc);
+	    }
+	    //printf("%s responded \"%s\"\n", myThreadLabel, msg);
+
+	    break;
+
+	case INVALID:
+	default:
+	    //printf("%s received invalid net function\n", myThreadLabel);
+	    errno = EINVAL;  
+	    rc = FAILURE;
+	    sprintf(msg, "%d,%d,%d,0", FAILURE, errno, h_errno);
+	    break;
     }
 
 
 
     //
-    // Send my server response back to the client
+    // Send my final server response back to the client
     //
     rc = write(*sockfd, msg, strlen(msg) );
     if ( rc < 0 ) {
-        fprintf(stderr,"%s fails to write to socket\n", myThreadLabel);
+	fprintf(stderr,"%s fails to write to socket\n", myThreadLabel);
     }
 
     if ( *sockfd != 0 ) close(*sockfd);
@@ -629,23 +778,23 @@ int Do_netopen( NET_FD_TYPE *newFd )
     int rc = -1;
 
     //
-    // Verify the specified file exists and accessible
-    //
+// Verify the specified file exists and accessible
+//
     rc = open(newFd->pathname, newFd->fileOpenFlags);
     if ( rc < 0 ) {
-        // File open failed
-        //fprintf(stderr,"netopen: errno= %d \"%s\", h_errno= %d\n", errno, strerror(errno), h_errno);
+	// File open failed
+	//fprintf(stderr,"netopen: errno= %d \"%s\", h_errno= %d\n", errno, strerror(errno), h_errno);
 
-        if ((errno == ENOENT) && (newFd->fileOpenFlags != O_RDONLY)) {
-            // This file does not exist but I am trying to write to
-            // it to create.  I can ignore this open error.
-            errno = 0;
-        }
-        else {
-            // This file cannot be opened.  It may be a
-            // directory or no file access permission.
-            return FAILURE;
-        }
+	if ((errno == ENOENT) && (newFd->fileOpenFlags != O_RDONLY)) {
+	    // This file does not exist but I am trying to write to
+	    // it to create.  I can ignore this open error.
+	    errno = 0;
+	}
+	else {
+	    // This file cannot be opened.  It may be a
+	    // directory or no file access permission.
+	    return FAILURE;
+	}
     }
 
     //
@@ -659,12 +808,12 @@ int Do_netopen( NET_FD_TYPE *newFd )
     // Now we need to check the net file connection access policy.
     //
     if ( canOpen(newFd) == FALSE ) {
-        //printf("canOpen() returns FALSE\n");
-        //printFDtable();
+	//printf("canOpen() returns FALSE\n");
+	//printFDtable();
 
-        // Not allowed by access policy
-        errno = EACCES;
-        return FAILURE;
+	// Not allowed by access policy
+	errno = EACCES;
+	return FAILURE;
     };
 
 
@@ -673,9 +822,9 @@ int Do_netopen( NET_FD_TYPE *newFd )
     //
     rc = createFD( newFd );
     if ( rc == FAILURE ) {
-        // No more empty slot in file descriptor table.
-        errno = ENFILE;
-        return FAILURE;
+	// No more empty slot in file descriptor table.
+	errno = ENFILE;
+	return FAILURE;
     }
 
     return rc;  // This is the file descriptor
@@ -695,20 +844,17 @@ int Do_netopen( NET_FD_TYPE *newFd )
 // returned in case of error.  Otherwise, the total number
 // of parts count is returned.
 //
-int Do_netwrite( int nBytes, pthread_t *pTids, int *portCount, char *portList )
+int Do_netwrite( const int nBytes, pthread_t *pTids, int *portCount, char *portList )
 {
+    *portCount = 0;
     portList[0] = '\0';
 
     //
     // Step 1: Check to see if creating an empty file
     //
     if ( nBytes <= 0 ) {
-        // Writing an empty file
-        printf("netfileserver: Do_netwrite received nBytes= %d, will create empty file.\n", nBytes);
-
-/*** TODO: create an empty file.  ***/
-
-        return 0;  // No parts count to return
+	// Nothing to write
+	return 0;  // No parts count to return
     }
 
 
@@ -739,6 +885,97 @@ int Do_netwrite( int nBytes, pthread_t *pTids, int *portCount, char *portList )
     int j = 0;
     int i = 1;
     for (i=1; i <= MAX_FILE_TRANSFER_SOCKETS; i++) {
+	//
+	// Look for an open port
+	//
+	sockfd = getSockfd(port);
+	if (sockfd != FAILURE) {
+	    //
+	    // Opened this port for listening
+	    //
+	    *portCount = (*portCount) +1;
+	    char sTemp[16] = "";
+	    sprintf(sTemp, "%d,", port);
+	    strcat(portList, sTemp);
+
+	    //
+	    // Step 4: Spawn a new netwriteListener thread to
+	    //         listen for data coming in from a port
+	    //
+	    int *pSockfd = malloc(sizeof(int));
+	    *pSockfd= sockfd;
+	    pthread_create(&pTids[j], NULL, &netwriteListener, pSockfd );
+	    //printf("netfileserver: Do_netwrite spawned thread %ld, sockfd= %d\n",pTids[j],*pSockfd);
+	    j++;
+	}
+
+	port++;
+
+	// Break the for loop if I got all the ports I wanted
+	if ( *portCount >= portWanted) break;
+    }
+
+    //printf("netfileserver: Do_netwrite portWanted= %d, portCount= %d, portList= %s\n",
+    //               portWanted, *portCount, portList);
+
+    if ( *portCount <= 0 ) {
+	// All ports are in use.  Cannot do net write now.
+	//printf("netfileserver: no port is available.  Cannot do netwrite now.\n");
+	errno = ETIMEDOUT;
+	return FAILURE;
+    }
+
+    return *portCount;
+}
+
+
+/////////////////////////////////////////////////////////////
+
+// This function returns the number of portCount which is
+// also the same as the number of "netreadListener" threads
+// spawned by this function.
+//
+int Do_netread( const int nBytes, pthread_t *pTids, int *portCount, char *portList )
+{
+    *portCount = 0;
+    portList[0] = '\0';
+
+    //
+    // Step 1: Check to see if reading negative number of bytes
+    //
+    if ( nBytes <= 0 ) {
+        // Nothing to read
+        return 0;  // No parts count to return
+    }
+
+
+    //
+    // Step 2: Calculate the number of ports need to read
+    //         "nBytes" of data from this file.  Each port
+    //         will handle one part of the data file.  So,
+    //         portCount also represents the total number
+    //         of file parts count.
+    //
+    int portWanted = (nBytes / (int)DATA_CHUNK_SIZE);
+    if ( (nBytes % DATA_CHUNK_SIZE) != 0 ) portWanted++;
+
+    if (portWanted <= 0) portWanted = 1;
+    if (portWanted > MAX_FILE_TRANSFER_SOCKETS) portWanted = MAX_FILE_TRANSFER_SOCKETS;
+
+    printf("netfileserver: Do_netread %d ports are needed to transfer %d bytes\n",
+                   portWanted, nBytes);
+
+    //
+    // Step 3: Try to open the number of ports as
+    //         calculated from above.  We may get
+    //         less than the number of ports wanted
+    //         because some ports may be in use.
+    //
+    int sockfd = -1;
+    int port = PORT_NUMBER + 1;
+    int j = 0;
+    int i = 1;
+    for (i=1; i <= MAX_FILE_TRANSFER_SOCKETS; i++) {
         //
         // Look for an open port
         //
@@ -747,21 +984,20 @@ int Do_netwrite( int nBytes, pthread_t *pTids, int *portCount, char *portList )
             //
             // Opened this port for listening
             //
-            *portCount = (*portCount) +1;
+            *portCount = (*portCount) + 1;
             char sTemp[16] = "";
             sprintf(sTemp, "%d,", port);
             strcat(portList, sTemp);
 
             //
-            // Step 4: Spawn a new netwriteListener thread to
-            //         listen for data coming in from a port
+            // Step 4: Spawn a new netreadListener thread to
+            //         send data to the client
             //
-            pthread_create(&pTids[j], NULL, &netwriteListener, &sockfd );
-            printf("netfileserver: Do_netwrite spawned thread %ld, sockfd= %d\n",pTids[j],sockfd);
+            int *pSockfd = malloc(sizeof(int));
+            *pSockfd= sockfd;
+            pthread_create(&pTids[j], NULL, &netreadListener, pSockfd );
+            printf("netfileserver: Do_netread spawned thread %ld, sockfd= %d\n",pTids[j],*pSockfd);
             j++;
-
-sleep(1);
-
         }
 
         port++;
@@ -770,20 +1006,18 @@ sleep(1);
         if ( *portCount >= portWanted) break;
     }
 
-    //printf("netfileserver: Do_netwrite portWanted= %d, portCount= %d, portList= %s\n",
-    //               portWanted, *portCount, portList);
+    printf("netfileserver: Do_netread portWanted= %d, portCount= %d, portList= %s\n",
+                   portWanted, *portCount, portList);
 
     if ( *portCount <= 0 ) {
-        // All ports are in use.  Cannot do net write now.
-        printf("netfileserver: no port is available.  Cannot do netwrite now.\n");
+        // All ports are in use.  Cannot do net read now.
+        printf("netfileserver: no port is available.  Cannot do netread now.\n");
         errno = ETIMEDOUT;
         return FAILURE;
     }
 
     return *portCount;
 }
-
-
 
 /////////////////////////////////////////////////////////////
 
@@ -844,8 +1078,9 @@ int getSockfd( const int port )
     {
         // This port may have already opened by another thread
         if ( errno == EADDRINUSE ) {
-            fprintf(stderr,"netfileserver: port %d already in use, errno= %d\n",
-                      port, errno);
+            //fprintf(stderr,"netfileserver: port %d already in use, errno= %d\n",
+            //          port, errno);
+            errno = 0;            
         }
         return FAILURE;
     }
@@ -861,12 +1096,8 @@ int getSockfd( const int port )
         close(sockfd);
         return FAILURE;
     }
-    else
-    {
-        //printf("netfileserver: sockfd %d is listening\n", sockfd);
-    }
 
-    printf("netfileserver: socket %d is listening and binded to port %d\n", sockfd, port);
+    //printf("netfileserver: socket %d is listening and binded to port %d\n", sockfd, port);
     return sockfd;
 }
 
@@ -1136,10 +1367,75 @@ int canOpen( NET_FD_TYPE *newFd )
 /////////////////////////////////////////////////////////////
 
 
+int canWrite( const int netfd, const int nBytes)
+{
+    //
+    // Check if this netfd is opened for O_RDONLY
+    //
+
+    NET_FD_TYPE *pFD = LookupFDTable(netfd);
+    if ( pFD == NULL ) {
+        // There is no such netfd in my file
+        // descriptor table.
+        errno = EBADF;
+        return FAILURE;
+    }
+
+    if (pFD->fileOpenFlags == O_RDONLY) {
+        // This netfd is opened for read-only mode
+        errno = EACCES;
+        return FAILURE;
+    }
+
+    if (nBytes < 0) {
+        // Invalid input argument.  Cannot write negative
+        // number of bytes into a file.
+        errno = EINVAL;
+        return FAILURE;
+    }
+
+    // This "netfd" is allowed for writing
+    return SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////
+
+
+int canRead( const int netfd, const int nBytes)
+{
+    //
+    // Check if this netfd is opened for O_RDONLY
+    //
+
+    NET_FD_TYPE *pFD = LookupFDTable(netfd);
+    if ( pFD == NULL ) {
+        // There is no such netfd in my file
+        // descriptor table.
+        errno = EBADF;
+        return FAILURE;
+    }
+
+    if (pFD->fileOpenFlags == O_WRONLY) {
+        // This netfd is opened for write-only mode
+        errno = EACCES;
+        return FAILURE;
+    }
+
+    if (nBytes < 0) {
+        // Invalid input argument.  Cannot read negative
+        // number of bytes from a file.
+        errno = EINVAL;
+        return FAILURE;
+    }
+
+    // This "netfd" is allowed for reading
+    return SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////
+
 void *netwriteListener( void *sfd )
 {
-    //int *pfd = sfd;
-    //int sockfd = *pfd;
     const int sockfd = *((int *)sfd);
     
     int newsockfd = 0;
@@ -1148,12 +1444,12 @@ void *netwriteListener( void *sfd )
     int rc = 0;
 
     char msg[MSG_SIZE] = "";
-    char myThreadLabel[64] = "";
+    char myThreadLabel[128] = "";
     sprintf(myThreadLabel, "netfileserver: netwriteListener %ld,", pthread_self());
 
-    //printf("%s sfd= %ld, *sfd= %d, sockfd= %d\n", myThreadLabel, (long)sfd, *pfd, sockfd);
 
-    printf("%s waiting to accept from sockfd %d\n", myThreadLabel, sockfd);
+    free(sfd);
+    //printf("%s waiting to accept from sockfd %d\n", myThreadLabel, sockfd);
     if ((newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, (socklen_t *)&clilen)) < 0)
     {
         //
@@ -1183,7 +1479,7 @@ void *netwriteListener( void *sfd )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("%s received \"%s\"\n", myThreadLabel, msg);
+    //printf("%s received \"%s\"\n", myThreadLabel, msg);
 
     int netFunc = -1;
     int netfd = -1;
@@ -1207,11 +1503,11 @@ void *netwriteListener( void *sfd )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("%s responded \"%s\"\n", myThreadLabel, msg);
+    //printf("%s responded \"%s\"\n", myThreadLabel, msg);
 
 
     //
-    // Read nBytes of data
+    // Read nBytes of data from the client
     //
     char *data;
     data = malloc(nBytes * sizeof(char));
@@ -1227,7 +1523,7 @@ void *netwriteListener( void *sfd )
     }
 
     nBytes = rc;  // This is the number of bytes received
-    printf("%s received %d bytes of data\n", myThreadLabel, nBytes);
+    //printf("%s received %d bytes of data\n", myThreadLabel, nBytes);
 
 //char sTemp[4096] = "";
 //bzero(sTemp, 4096);
@@ -1235,11 +1531,9 @@ void *netwriteListener( void *sfd )
 //printf("%s data= \"%s\"\n", myThreadLabel, sTemp);
 
     //
-    // TODO : Save the received data into a temporary file
-    //        using the sequence number as part of the file name
+    // Save the received data into a temporary file
+    // using the sequence number as part of the file name
     //
-
-
     rc = savePartfile( netfd, seqNum, data, nBytes);
     free(data);
 
@@ -1257,7 +1551,7 @@ void *netwriteListener( void *sfd )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("%s responded \"%s\"\n", myThreadLabel, msg);
+    //printf("%s responded \"%s\"\n", myThreadLabel, msg);
 
     if ( newsockfd != 0 ) close(newsockfd);
     rc = SUCCESS;
@@ -1278,16 +1572,13 @@ int savePartfile( int netfd, int seqNum, char *data, int nBytes)
     int rc = FAILURE;
 
 
-//char sTemp[4096] = "";
-//bzero(sTemp, 4096);
-//strncpy(sTemp, data, nBytes);
-//printf("netfileserver: thread %ld: savePartfile: data= \"%s\"\n", pthread_self(), sTemp);
-
-
-    // Lookup file information from the given netfd
     //printf("netfileserver: savePartfile: netfd= \"%d\"\n", netfd);
     //printFDtable();
-
+    //
+    // Lookup file information from the given netfd to compose
+    // the temporary file name.  It is the target filename
+    // with a numeric extension such as ".1", ".2", etc.
+    //
     fileInfo = LookupFDTable( netfd );
     strcpy( tempfile, fileInfo->pathname );
     sprintf(fileExt, ".%d", seqNum );
@@ -1388,6 +1679,9 @@ int reconstruct( const int netfd, const int parts)
                 if (dataSize == 0) {
                     fprintf(stderr,"netfileserver: reconstruct: fails to read \"%s\", errno= %d\n",
                        tempfile, errno);
+
+                    if (data != NULL) free(data);
+                    data = NULL;
                 }
             }
         }
@@ -1424,9 +1718,230 @@ int reconstruct( const int netfd, const int parts)
     if (fpWrite != NULL) fclose(fpWrite);
 
 
-    printf("netfileserver: reconstruct: created \"%s\", filesize= %ld\n",
-             fileInfo->pathname, iTotalFileSize);
+    //printf("netfileserver: reconstruct: created \"%s\", filesize= %ld\n",
+    //         fileInfo->pathname, iTotalFileSize);
 
     return iTotalFileSize;
 }
+
+
+/////////////////////////////////////////////////////////////
+
+int findOpenPorts() 
+{
+    return 0;
+}
+
+void *netreadListener( void *sfd )
+{
+    const int sockfd = *((int *)sfd);
+    
+    int newsockfd = 0;
+    struct sockaddr_in  cli_addr;
+    int clilen = sizeof(cli_addr);
+    int rc = 0;
+
+    char msg[MSG_SIZE] = "";
+    char myThreadLabel[128] = "";
+    sprintf(myThreadLabel, "netfileserver: netreadListener %ld,", pthread_self());
+
+
+    free(sfd);
+    printf("%s waiting to accept from sockfd %d\n", myThreadLabel, sockfd);
+    if ((newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, (socklen_t *)&clilen)) < 0)
+    {
+        //
+        // Socket accept function returns an error
+        //
+        fprintf(stderr,"%s accept() failed, sockfd= %d, errno= %d (%s), h_errno= %d\n",
+                 myThreadLabel, sockfd, errno, strerror(errno), h_errno);
+
+        if ( newsockfd != 0 ) close(newsockfd);
+        if ( sockfd != 0 ) close(sockfd);
+        rc = FAILURE;
+        pthread_exit( &rc );
+    }
+    if ( sockfd != 0 ) close(sockfd);
+
+
+    //
+    // First incoming message format is:
+    //     netread, netfd, seqNum, iStartPos, nBytes
+    //
+    bzero(msg, MSG_SIZE);
+    rc = read(newsockfd, msg, MSG_SIZE -1);
+    if ( rc < 0 ) {
+        fprintf(stderr,"%s fails to read from socket, errno= %d, h_errno= %d\n",
+                 myThreadLabel, errno, h_errno);
+        if ( sockfd != 0 ) close(sockfd);
+        rc = FAILURE;
+        pthread_exit( &rc );
+    }
+    printf("%s received \"%s\"\n", myThreadLabel, msg);
+
+    int netFunc   = -1;
+    int netfd     =  0;
+    int seqNum    = -1;
+    int iStartPos = -1;
+    int nBytes    = -1;
+    sscanf(msg, "%d,%d,%d,%d,%d", &netFunc, &netfd, &seqNum, &iStartPos, &nBytes);
+
+    printf("%s netFunc= %d, netfd= %d, seqNum= %d, iStartPos= %d, nBytes= %d\n",
+             myThreadLabel, netFunc, netfd, seqNum, iStartPos, nBytes);
+
+
+    // TODO: read "nBytes" of data starting at position "iStartPos" 
+    //       from the file referred to as "netfd"
+    //
+    char *pData = NULL;
+    pData = readFileData( netfd, iStartPos, nBytes);
+
+
+    //
+    // Send "nBytes" of data to the client
+    //
+    if ( pData != NULL ) {
+        rc = write(newsockfd, pData, nBytes);
+        if ( rc < 0 ) {
+            fprintf(stderr,"%s fails to send %d bytes of data to client\n", myThreadLabel, nBytes);
+            if ( pData != NULL ) free(pData);
+            if ( sockfd != 0 ) close(sockfd);
+            rc = FAILURE;
+            pthread_exit( &rc );
+        }
+        if ( pData != NULL ) free(pData);
+        printf("%s sent %d bytes of data to client\n", myThreadLabel, nBytes);
+    }
+
+
+
+    //
+    // Read the response from the client saying the number
+    // of bytes received.  The incoming message format is:
+    //
+    //     resultCode, errno, h_errno, nBytes
+    //
+    bzero(msg, MSG_SIZE);
+    rc = read(newsockfd, msg, MSG_SIZE -1);
+    if ( rc < 0 ) {
+        fprintf(stderr,"%s fails to read from socket, errno= %d, h_errno= %d\n",
+                 myThreadLabel, errno, h_errno);
+        if ( sockfd != 0 ) close(sockfd);
+        rc = FAILURE;
+        pthread_exit( &rc );
+    }
+
+    printf("%s received \"%s\"\n", myThreadLabel, msg);
+
+    int resultCode  = FAILURE;
+    int iBytesRecv  = 0;
+    sscanf(msg, "%d,%d,%d,%d", &resultCode, &errno, &h_errno, &iBytesRecv);
+
+    printf("%s resultCode= %d, errno= %d, h_errno= %d, iBytesRecv= %d\n",
+             myThreadLabel, resultCode, errno, h_errno, iBytesRecv);
+
+
+
+    if ( newsockfd != 0 ) close(newsockfd);
+    rc = SUCCESS;
+    pthread_exit( &iBytesRecv );
+}
+
+
+/////////////////////////////////////////////////////////////
+
+
+char *readFileData( const int netfd, const int iStartPos, const int nBytes, int *iBytesRead)
+{
+    NET_FD_TYPE  *fileInfo = NULL;
+    FILE *fpRead;
+    char *pData = NULL;
+
+    
+    if ((iStartPos <0) || (nBytes <=0)) return NULL;
+
+    // Find the file to read from
+    fileInfo = LookupFDTable( netfd );
+
+    if ( fileInfo == NULL ) return NULL;
+    printf("netfileserver: readFileData: pathname= \"%s\"\n", fileInfo->pathname);
+
+    // Open the data file for reading
+    fpRead = fopen(fileInfo->pathname,"r");
+    if ( fpRead == NULL ) {
+        // Fail to open the data file for reading
+        fprintf(stderr,"netfileserver: readFileData: fails to open \"%s\" for read, errno= %d\n",
+                   fileInfo->pathname, errno);
+        return NULL;
+    }
+
+
+    //
+    // Set the file position to "iStartPos" relative 
+    // to the beginning of the file.
+    //
+    if (fseek(fpRead, iStartPos, SEEK_SET) == 0) {
+        pData = malloc( nBytes * sizeof(char) );
+        bzero(pData, nBytes);
+
+        //size_t  dataSize = 0;
+
+        if ( pData != NULL ) {
+            *iBytesRead = (int)fread(pData, sizeof(char), nBytes, fpRead);
+            if ( *iBytesRead <= 0) {
+                fprintf(stderr,"netfileserver: readFileData: fails to read \"%s\", errno= %d\n",
+                       tempfile, errno);
+
+                if (pData != NULL)  free(pData);
+                if (fpRead != NULL) fclose(fpRead);
+                return NULL;
+            }
+
+        }
+    } // End of fseek()
+
+
+
+
+        // Read the entire part file into memory
+        bufsize = 0;
+        data = NULL;
+
+        // Go to the end of the temp file.
+        if (fseek(fpRead, 0L, SEEK_END) == 0) {
+            // Get the size of the file.
+            bufsize = ftell(fpRead);
+            if (bufsize != -1) {
+                // Allocate our buffer to that size.
+                data = malloc(sizeof(char) * (bufsize + 1));
+                bzero(data,bufsize+1);
+
+                // Go back to the start of the file.
+                if (fseek(fpRead, 0L, SEEK_SET) != 0) {
+                    // Error
+                    if (data != NULL) free(data);
+                    data = NULL;
+                }
+            }
+
+            if ( data != NULL ) {
+                // Read the entire file into memory.
+                size_t dataSize = fread(data, sizeof(char), bufsize, fpRead);
+                if (dataSize == 0) {
+                    fprintf(stderr,"netfileserver: reconstruct: fails to read \"%s\", errno= %d\n",
+                       tempfile, errno);
+
+                    if (data != NULL) free(data);
+                    data = NULL;
+                }
+            }
+        }
+
+
+
+    if (fpRead != NULL) fclose(fpRead);
+    return NULL;
+}
+
+
 
