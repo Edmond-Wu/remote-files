@@ -76,7 +76,7 @@ int reconstruct( const int netfd, const int parts);
 // 
 int Do_netread( const int nBytes, pthread_t *pTids, int *portCount, char *portList );
 void *netreadListener( void *sockfd );
-char * readFileData( const int netfd, const int iStartPos, const int nBytes);
+char *readFileData( const int netfd, const int iStartPos, const int nBytes);
 
 
 //
@@ -1851,11 +1851,12 @@ void *netreadListener( void *sfd )
 /////////////////////////////////////////////////////////////
 
 
-char *readFileData( const int netfd, const int iStartPos, const int nBytes, int *iBytesRead)
+char *readFileData( const int netfd, const int iStartPos, const int nBytes)
 {
     NET_FD_TYPE  *fileInfo = NULL;
     FILE *fpRead;
     char *pData = NULL;
+    char *tempfile;
 
     
     if ((iStartPos <0) || (nBytes <=0)) return NULL;
@@ -1887,7 +1888,7 @@ char *readFileData( const int netfd, const int iStartPos, const int nBytes, int 
         //size_t  dataSize = 0;
 
         if ( pData != NULL ) {
-            *iBytesRead = (int)fread(pData, sizeof(char), nBytes, fpRead);
+            int *iBytesRead = (int)fread(pData, sizeof(char), nBytes, fpRead);
             if ( *iBytesRead <= 0) {
                 fprintf(stderr,"netfileserver: readFileData: fails to read \"%s\", errno= %d\n",
                        tempfile, errno);
@@ -1904,8 +1905,8 @@ char *readFileData( const int netfd, const int iStartPos, const int nBytes, int 
 
 
         // Read the entire part file into memory
-        bufsize = 0;
-        data = NULL;
+        size_t bufsize = 0;
+        char *data = NULL;
 
         // Go to the end of the temp file.
         if (fseek(fpRead, 0L, SEEK_END) == 0) {
