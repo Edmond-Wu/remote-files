@@ -1,0 +1,166 @@
+
+/////////////////////////////////////////////////////////////
+
+
+int savePartfile( int netfd, int seqNum, char *data, int nBytes)
+{
+    NET_FD_TYPE  *fileInfo;
+    char tempfile[256] = "";
+    char fileExt[16] = "";
+    FILE *fp;
+    int rc = FAILURE;
+
+
+    //printf("netfileserver: savePartfile: netfd= \"%d\"\n", netfd);
+    //printFDtable();
+    //
+    // Lookup file information from the given netfd to compose
+    // the temporary file name.  It is the target filename
+    // with a numeric extension such as ".1", ".2", etc.
+    //
+    fileInfo = LookupFDTable( netfd );
+    strcpy( tempfile, fileInfo->pathname );
+    sprintf(fileExt, ".%d", seqNum );
+    strcat( tempfile, fileExt);
+    //printf("netfileserver: savePartfile: temp tempfile= \"%s\"\n", tempfile);
+
+    // Open the temp file for writing
+    fp = fopen(tempfile,"w");
+    if ( fp == NULL ) {
+        // Fail to open the temp file
+        fprintf(stderr,"netfileserver: savePartfile: fails to open \"%s\", errno= %d\n",tempfile,errno);
+        return FAILURE;
+    }
+
+    rc = fwrite(data, sizeof(char), nBytes, fp);
+    if ( fflush(fp) != 0 ) {
+        fprintf(stderr,"netfileserver: savePartfile: fails to fflush \"%s\", errno= %d\n",tempfile,errno);
+    }
+
+    if ( fp != NULL ) fclose(fp);
+
+    return rc;
+}
+
+
+/////////////////////////////////////////////////////////////
+
+
+int reconstruct( const int netfd, const int parts)
+{
+    NET_FD_TYPE  *fileInfo;
+    char tempfile[256] = "";
+    char fileExt[16] = "";
+    FILE *fpWrite, *fpRead;
+    long iTotalFileSize = 0;
+
+
+    if ( parts <= 0 ) return SUCCESS;
+
+    // Find the file to write to
+    fileInfo = LookupFDTable( netfd );
+    //printf("netfileserver: reconstruct: pathname= \"%s\"\n", fileInfo->pathname);
+
+    // Open the final data file for writing
+    fpWrite = fopen(fileInfo->pathname,"w");
+    if ( fpWrite == NULL ) {
+        // Fail to open the data file for writing
+        fprintf(stderr,"netfileserver: reconstruct: fails to open \"%s\" for write, errno= %d\n",
+                   fileInfo->pathname, errno);
+        return FAILURE;
+    }
+
+    long bufsize = 0;
+    char *data = NULL;
+    int seqNum = 1;
+
+    for (seqNum=1; seqNum<= parts; seqNum++) {
+        strcpy( tempfile, fileInfo->pathname );
+        sprintf(fileExt, ".%d", seqNum );
+        strcat( tempfile, fileExt);
+        //printf("netfileserver: reconstruct: tempfile= \"%s\"\n", tempfile);
+
+        // Open the temp file for reading
+        fpRead = fopen(tempfile,"r");
+        if ( fpRead == NULL ) {
+            // Fail to open the temp file
+            fprintf(stderr,"netfileserver: reconstruct: fails to open \"%s\" for read, errno= %d\n",
+                      tempfile,errno);
+            if (fpWrite != NULL) fclose(fpWrite);
+            return FAILURE;
+        }
+
+
+        // Read the entire part file into memory
+        bufsize = 0;
+        data = NULL;
+
+        // Go to the end of the temp file.
+        if (fseek(fpRead, 0L, SEEK_END) == 0) {
+            // Get the size of the file.
+            bufsize = ftell(fpRead);
+            if (bufsize != -1) {
+                // Allocate our buffer to that size.
+                data = malloc(sizeof(char) * (bufsize + 1));
+                bzero(data,bufsize+1);
+
+                // Go back to the start of the file.
+                if (fseek(fpRead, 0L, SEEK_SET) != 0) {
+                    // Error
+                    if (data != NULL) free(data);
+                    data = NULL;
+                }
+            }
+
+            if ( data != NULL ) {
+                // Read the entire file into memory.
+                size_t dataSize = fread(data, sizeof(char), bufsize, fpRead);
+                if (dataSize == 0) {
+                    fprintf(stderr,"netfileserver: reconstruct: fails to read \"%s\", errno= %d\n",
+                       tempfile, errno);
+
+                    if (data != NULL) free(data);
+                    data = NULL;
+                }
+            }
+        }
+        if (fpRead != NULL) fclose(fpRead);
+
+        if ( data != NULL ) {
+            // Write the part data into the output file
+            int nBytes = -1;
+            nBytes = fwrite(data, sizeof(char), bufsize, fpWrite);
+            iTotalFileSize = iTotalFileSize + nBytes;
+            if (data != NULL)   free(data);
+
+            if ( seqNum == 1 ) {
+                //
+                // After the first part in the file sequence,
+                // I must open the data file for append mode.
+                //
+                fclose(fpWrite);
+                fpWrite = fopen(fileInfo->pathname,"a");
+            }
+        }
+        else {
+            // Cannot retrieve the piece part data
+            return FAILURE;
+        }
+
+
+        // Remove the part file
+        remove(tempfile);
+
+    }  //Append the next piece part
+
+    // Finish reconstructing the data file from piece parts
+    if (fpWrite != NULL) fclose(fpWrite);
+
+
+    //printf("netfileserver: reconstruct: created \"%s\", filesize= %ld\n",
+    //         fileInfo->pathname, iTotalFileSize);
+
+    return iTotalFileSize;
+}
+
+

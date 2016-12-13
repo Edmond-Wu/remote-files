@@ -1,10 +1,11 @@
 
-#include <errno.h>
-#include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 
 #include <sys/types.h>
@@ -64,6 +65,7 @@ int main(int argc, char *argv[])
     int  rc = FAILURE;
     int  fd = -1;
     char buf[256] = "";
+    bzero( buf, 256);
 
 
     if (argc < 2) {
@@ -641,10 +643,13 @@ int main(int argc, char *argv[])
     rc = netwrite(fd, buf, 3048);
 
     rc = netwrite(fd, buf, 0);
+    strcpy(buf, "Hello Toni.  This has been a long and frustrating ordeal for three weeks!\n");
+    strcpy(buf, "1234567890123456789012345678901234567890");
+    rc = netwrite(fd, buf, strlen(buf));
 */
 
-    strcpy(buf, "Hello Toni.  This has been a long and frustrating ordeal for three weeks!\n");
-    rc = netwrite(fd, buf, strlen(buf));
+    strncpy(buf, "123456789012345678901234567890123456789012345", 45);
+    rc = netwrite(fd, buf, 45);
 
     if (rc != FAILURE)
     {
@@ -657,6 +662,59 @@ int main(int argc, char *argv[])
     };
     printf("---------------------------------------------------------------------------\n");
 
+
+
+
+
+    //
+    // Test 31: netread "./testdata/junk.txt" with O_RDONLY in unrestricted mode
+    //          This test should pass after 
+    //
+    rc = netserverinit( hostname, UNRESTRICTED_MODE );
+    if ( rc == SUCCESS ) 
+    {
+        printf("test 31: PASSED: netserverinit \"%s\", unrestricted, errno= %d, h_errno= %d\n",
+                         hostname,errno,h_errno);
+    } else {
+        printf("test 31: FAILED: netserverinit \"%s\", unrestricted, errno= %d (%s), h_errno= %d\n",
+                         hostname,errno, strerror(errno), h_errno);
+        exit(EXIT_FAILURE);
+    };
+
+    fd = netopen("./testdata/writeThis.txt", O_RDONLY); 
+    if (fd == FAILURE)
+    {
+        printf("test 31: FAILED: netopen(\"./testdata/writeThis.txt\",O_RDONLY) unrestricted returns %d, errno= %d (%s), h_errno= %d\n",
+                 rc, errno, strerror(errno), h_errno);
+        exit(EXIT_FAILURE);
+    };
+
+
+    //strcpy(buf, "Hello Toni.  This has been a long and frustrating ordeal for three weeks!\n");
+    //
+    //
+#define  BYTE_SIZE  23
+
+    int nBytesWant = BYTE_SIZE;
+    int nBytesRead =  0;
+    char data[ BYTE_SIZE +1 ] = "";
+    bzero( data, BYTE_SIZE+1);
+    nBytesRead = netread( fd, data, nBytesWant );
+
+    printf("test 31: netread received %d bytes -- %s\n", nBytesRead, data);
+
+
+
+    if ( nBytesRead == nBytesWant )
+    {
+        printf("test 31: PASSED: netread(\"./testdata/writeThis.txt\",O_RDWR) unrestricted returns nBytesRead= %d, errno= %d (%s), h_errno= %d\n",
+                 nBytesRead, errno, strerror(errno), h_errno);
+    } else {
+        printf("test 31: FAILED: netread(\"./testdata/writeThis.txt\",O_RDWR) unrestricted returns nBytesRead= %d, errno= %d (%s), h_errno= %d\n",
+                 nBytesRead, errno, strerror(errno), h_errno);
+        exit(EXIT_FAILURE);
+    };
+    printf("---------------------------------------------------------------------------\n");
 
 
 }
