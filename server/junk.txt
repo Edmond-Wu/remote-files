@@ -1,34 +1,8 @@
+typedef struct {
+    int  fd;                      // File descriptor (must be negative)
+    FILE_CONNECTION_MODE fcMode;  // File connection mode
+    int fileOpenFlags;            // Open file flags
+    char pathname[256];           // file path name
+} NET_FD_TYPE;
 
-        // Read the entire part file into memory
-        bufsize = 0;
-        data = NULL;
 
-        // Go to the end of the temp file.
-        if (fseek(fpRead, 0L, SEEK_END) == 0) {
-            // Get the size of the file.
-            bufsize = ftell(fpRead);
-            if (bufsize != -1) {
-                // Allocate our buffer to that size.
-                data = malloc(sizeof(char) * (bufsize + 1));
-                bzero(data,bufsize+1);
-
-                // Go back to the start of the file.
-                if (fseek(fpRead, 0L, SEEK_SET) != 0) {
-                    // Error
-                    if (data != NULL) free(data);
-                    data = NULL;
-                }
-            }
-
-            if ( data != NULL ) {
-                // Read the entire file into memory.
-                size_t dataSize = fread(data, sizeof(char), bufsize, fpRead);
-                if (dataSize == 0) {
-                    fprintf(stderr,"netfileserver: reconstruct: fails to read \"%s\", errno= %d\n",
-                       tempfile, errno);
-
-                    if (data != NULL) free(data);
-                    data = NULL;
-                }
-            }
-        }

@@ -22,7 +22,7 @@
 //
 // Hard-coded port number for net file server
 //
-#define PORT_NUMBER  54321  
+#define NET_SERVER_PORT_NUM  54321  
 
 
 //
@@ -90,8 +90,6 @@ typedef enum {
     NET_CLOSE = 5,
     INVALID   = 99
 } NET_FUNCTION_TYPE;
-
-
 
 
 
