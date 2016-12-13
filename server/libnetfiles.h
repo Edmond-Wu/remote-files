@@ -23,7 +23,7 @@
 // Hard-coded port number for net file server
 //
 #define NET_SERVER_PORT_NUM  54321  
-
+#define PORT_NUMBER 54321
 
 //
 // Max size of the file descriptor table.  
