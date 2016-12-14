@@ -855,6 +855,7 @@ int Do_netopen( NET_FD_TYPE *newFd )
 
 	// Not allowed by access policy
 	errno = EACCES;
+	enqueue(newFd->fd);
 	return FAILURE;
     };
 
@@ -862,10 +863,12 @@ int Do_netopen( NET_FD_TYPE *newFd )
     //
     // Store this new file descriptor in fd table
     //
+    int old_rc = rc;
     rc = createFD( newFd );
     if ( rc == FAILURE ) {
 	// No more empty slot in file descriptor table.
 	errno = ENFILE;
+	enqueue(old_rc);
 	return FAILURE;
     }
 
