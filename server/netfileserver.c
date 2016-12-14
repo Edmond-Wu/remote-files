@@ -38,6 +38,15 @@ typedef struct {
     NET_FD_TYPE netFd;
 } FILE_TRANSFER_SOCKET_TYPE;
 
+//queue data structure for extensions C and D
+typedef struct QNode {
+	int tid;
+	struct QNode *next;
+} QNode;
+
+//global queue node to keep track of process queue
+QNode *queue = NULL;
+
 
 /////////////////////////////////////////////////////////////
 //
@@ -45,6 +54,11 @@ typedef struct {
 //
 /////////////////////////////////////////////////////////////
 
+QNode* createQNode(int id);
+void enqueue(int id);
+int dequeue();
+
+//////////////////////////////////////////////////////////////
 void initialize();
 static void sig_handler( const int signo );
 static void SetupSignals();
@@ -115,8 +129,38 @@ pthread_t HB_thread_ID = 0;
 //
 NET_FD_TYPE   FD_Table[ FD_TABLE_SIZE ];
 
+//queue operations
+//creating queue node
+QNode* createQNode(int id) {
+	QNode *node = malloc(sizeof(QNode));
+	node->tid = id;
+	node->next = NULL;
+	return node;
+}
 
-
+//enqueuing a node
+void enqueue(int id) {
+	QNode *node = createQNode(id);
+	if (queue == NULL) {
+		queue = node;
+		return;
+	}
+	QNode *ptr = queue;
+	while (ptr->next != NULL) {
+		ptr = ptr->next;
+	}
+	ptr->next = node;
+}
+	
+//dequeues
+int dequeue() {
+	QNode *old_front = queue;
+	QNode *next_in_line = queue->next;
+	int id = old_front->tid;
+	queue = next_in_line;
+	free(old_front);
+	return id;
+}
 
 /////////////////////////////////////////////////////////////
 
@@ -184,11 +228,6 @@ int main(int argc, char *argv[])
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    else
-    {
-        //printf("netfileserver: listener is listening on socket %d\n", sockfd);
-    }
-
 
     //
     // Start the listener to listen for incoming requests from
@@ -277,17 +316,17 @@ static void sig_handler( const int signo )
     switch ( signo )
     {
     case SIGINT:
-    	printf("nerfileserver: sig_handler caught SIGINT\n");
+    	printf("netfileserver: sig_handler caught SIGINT\n");
     	bTerminate = TRUE;
     	break;
 
     case SIGTERM:
-    	printf("nerfileserver: sig_handler caught SIGTERM\n");
+    	printf("netfileserver: sig_handler caught SIGTERM\n");
     	bTerminate = TRUE;
     	break;
 
     case SIGALRM:
-    	printf("nerfileserver: sig_handler caught SIGALRM");
+    	printf("netfileserver: sig_handler caught SIGALRM");
 
     	//
     	// SIGALRM is my alarm timer
@@ -305,7 +344,7 @@ static void sig_handler( const int signo )
     			// We do not have a heart beat thread running
     			// at this time.  Start it up now.
     			//
-    			printf("nerfileserver: sig_handler creating a new heart beat thread\n");
+    			printf("netfileserver: sig_handler creating a new heart beat thread\n");
     			//rc = pthread_create(&HB_thread_ID, NULL, HeartBeat, (void *)NULL );
     			//WriteLogInt("sig_handler(): pthread_create returns",rc,LOG_INFO);
     			//WriteLogInt("sig_handler(): HB thread ID =",HB_thread_ID,LOG_INFO);
@@ -321,7 +360,7 @@ static void sig_handler( const int signo )
     			// signal again.  It must be hung.  Time to restart
     			// my daemon listener thread.
     			//
-    			printf("nerfileserver: sig_handler cancelling heart beat thread\n");
+    			printf("netfileserver: sig_handler cancelling heart beat thread\n");
     			//rc = pthread_cancel( HB_thread_ID );
     			//printf("sig_handler: pthread_cancel returns",rc);
 
@@ -336,7 +375,7 @@ static void sig_handler( const int signo )
     	//
     	// We received a signal that we don't know how to handle
     	//
-    	printf("nerfileserver: sig_handler caught unhandled signal %d\n", signo);
+    	printf("netfileserver: sig_handler caught unhandled signal %d\n", signo);
     	break;
 
     }; // end of the switch statement
