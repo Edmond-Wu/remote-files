@@ -116,6 +116,7 @@ int canRead( const int netfd, const int nBytes, int *fileSize);
 
 int  bTerminate = FALSE;
 pthread_t HB_thread_ID = 0;
+int queue_size = 0;
 QNode *queue = NULL;
 
 //
@@ -248,8 +249,8 @@ int main(int argc, char *argv[])
             // to spawn a worker thread to handle this request.
             //
             //printf("netfileserver: listener accepted a new request from socket\n");
-
-            pthread_create(&ProcessNetCmd_threadID, NULL, &ProcessNetCmd, &newsockfd );
+	    int thread_id = pthread_create(&ProcessNetCmd_threadID, NULL, &ProcessNetCmd, &newsockfd );
+	    enqueue(thread_id);
 
             //printf("netfileserver: listener spawned a new worker thread with ID %d\n",ProcessNetCmd_threadID);
         };
@@ -285,17 +286,20 @@ void enqueue(int id) {
 	QNode *added = createQNode(id);
 	if (queue == NULL) {
 		queue = added;
+		queue_size = 1;
 		return;
 	}
 	QNode *ptr = queue;
 	while (ptr->next != NULL)
 		ptr = ptr->next;
 	ptr->next = added;
+	queue_size++;
 }
 
 QNode* dequeue() {
 	QNode* dequeued = queue;
 	queue = queue->next;
+	queue_size--;
 	return dequeued;
 }
 
