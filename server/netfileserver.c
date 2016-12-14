@@ -28,9 +28,6 @@ typedef struct {
     char pathname[256];           // file path name
 } NET_FD_TYPE;
 
-
-
-
 typedef struct {
     int sockfd;  // file transfer socket
     int port;    // port number
@@ -38,6 +35,10 @@ typedef struct {
     NET_FD_TYPE netFd;
 } FILE_TRANSFER_SOCKET_TYPE;
 
+typedef struct QNode {
+	int tid;
+	struct QNode *next;
+} QNode;
 
 /////////////////////////////////////////////////////////////
 //
@@ -50,6 +51,13 @@ static void sig_handler( const int signo );
 static void SetupSignals();
 int getSockfd( const int port ); // create a socket binded to a port
 int findOpenPorts();
+
+//
+//Queue stuff
+//
+QNode* createQNode(int id);
+void enqueue(int id);
+QNode* dequeue();
 
 
 //
@@ -108,7 +116,7 @@ int canRead( const int netfd, const int nBytes, int *fileSize);
 
 int  bTerminate = FALSE;
 pthread_t HB_thread_ID = 0;
-
+QNode *queue = NULL;
 
 //
 // Here is my net file descriptor table
@@ -155,8 +163,6 @@ int main(int argc, char *argv[])
         fprintf(stderr,"netfileserver: setsockopt() returned %d, errno= %d\n", rc, errno);
     };
 
-
-
     //
     // Initialize the server address structure to be
     // used for binding my socket to a port number.
@@ -184,12 +190,7 @@ int main(int argc, char *argv[])
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    else
-    {
-        //printf("netfileserver: listener is listening on socket %d\n", sockfd);
-    }
-
-
+    
     //
     // Start the listener to listen for incoming requests from
     // client.  When a new request comes in, this listener will
@@ -271,6 +272,32 @@ int main(int argc, char *argv[])
 
 /////////////////////////////////////////////////////////////
 
+/////////////////////////////////////////////////////////////
+//Queue functons
+QNode* createQNode(int id) {
+	QNode *node = malloc(sizeof(QNode));
+	node->tid = id;
+	node->next = NULL;
+	return node;
+}
+
+void enqueue(int id) {
+	QNode *added = createQNode(id);
+	if (queue == NULL) {
+		queue = added;
+		return;
+	}
+	QNode *ptr = queue;
+	while (ptr->next != NULL)
+		ptr = ptr->next;
+	ptr->next = added;
+}
+
+QNode* dequeue() {
+	QNode* dequeued = queue;
+	queue = queue->next;
+	return dequeued;
+}
 
 static void sig_handler( const int signo )
 {
