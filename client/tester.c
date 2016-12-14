@@ -673,8 +673,8 @@ int main(int argc, char *argv[])
     rc = netserverinit( hostname, UNRESTRICTED_MODE );
     if ( rc == SUCCESS ) 
     {
-        printf("test 31: PASSED: netserverinit \"%s\", unrestricted, errno= %d, h_errno= %d\n",
-                         hostname,errno,h_errno);
+        //printf("test 31: PASSED: netserverinit \"%s\", unrestricted, errno= %d, h_errno= %d\n",
+        //                 hostname,errno,h_errno);
     } else {
         printf("test 31: FAILED: netserverinit \"%s\", unrestricted, errno= %d (%s), h_errno= %d\n",
                          hostname,errno, strerror(errno), h_errno);
@@ -684,8 +684,9 @@ int main(int argc, char *argv[])
     fd = netopen("./testdata/writeThis.txt", O_RDONLY); 
     if (fd == FAILURE)
     {
-        printf("test 31: FAILED: netopen(\"./testdata/writeThis.txt\",O_RDONLY) unrestricted returns %d, errno= %d (%s), h_errno= %d\n",
-                 rc, errno, strerror(errno), h_errno);
+        //printf("test 31: FAILED: netopen(\"./testdata/writeThis.txt\",O_RDONLY) unrestricted returns %d, errno= %d (%s), h_errno= %d\n",
+        //         rc, errno, strerror(errno), h_errno);
+        
         exit(EXIT_FAILURE);
     };
 
@@ -701,7 +702,7 @@ int main(int argc, char *argv[])
     bzero( data, BYTE_SIZE+1);
     nBytesRead = netread( fd, data, nBytesWant );
 
-    printf("test 31: netread received %d bytes -- %s\n", nBytesRead, data);
+    //printf("test 31: netread received %d bytes -- %s\n", nBytesRead, data);
 
 
 

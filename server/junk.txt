@@ -1,8 +1,0 @@
-typedef struct {
-    int  fd;                      // File descriptor (must be negative)
-    FILE_CONNECTION_MODE fcMode;  // File connection mode
-    int fileOpenFlags;            // Open file flags
-    char pathname[256];           // file path name
-} NET_FD_TYPE;
-
-

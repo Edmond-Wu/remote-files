@@ -34,19 +34,6 @@
 
 
 typedef struct {
-    int fd;               // "fd" issued by net client library
-
-    int serverFd;         // "serverFd" issued by net server
-    char hostname[64];    // remote net server name
-    char pathname[256];   // remote file name
-
-    int fileOpenFlags;    // file open mode flags
-    FILE_CONNECTION_MODE fcMode;  // open connection mode
-
-} CLIENT_NET_FD_TYPE;
-
-
-typedef struct {
     char hostname[64];
     FILE_CONNECTION_MODE fcMode;
 } NET_SERVER;
@@ -72,7 +59,6 @@ typedef struct {
 
 int     getSockfd( const char * hostname, const int port );
 
-//int     OldgetSockfd( const char *hostname ); 
 int     isNetServerInitialized( NET_FUNCTION_TYPE iFunc );
 
 int     xferStrategy(NET_FUNCTION_TYPE netFunc, const int netfd, 
@@ -80,13 +66,7 @@ int     xferStrategy(NET_FUNCTION_TYPE netFunc, const int netfd,
                      const int portCount, int *ports);
 
 void    *sendData( void *filePart);  // thread for netwrite
-void    *getData( void *filePart );  // thread for netread
-
-int     netserverinit(char *hostname, int filemode);
-int     netopen(const char *pathname, int flags);
-ssize_t netread(int fildes, void *buf, size_t nbyte); 
-ssize_t netwrite(int fildes, const void *buf, size_t nbyte); 
-int     netclose(int fd);
+void    *getData(  void *filePart);  // thread for netread
 
 
 
@@ -101,14 +81,12 @@ NET_SERVER gNetServer;
 
 
 
-
 /////////////////////////////////////////////////////////////
 
 
 int getSockfd( const char * hostname, const int port )
 {
     int sockfd = 0;
-    int connectedPort = -1;
 
     struct sockaddr_in serv_addr;
     struct hostent *server = NULL;
@@ -141,94 +119,32 @@ int getSockfd( const char * hostname, const int port )
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
 
-    //bcopy((char *)server->h_addr, 
-    //     (char *)&serv_addr.sin_addr.s_addr,
-    //     server->h_length);
-
     bcopy((char *)server->h_addr_list[0], 
          (char *)&serv_addr.sin_addr.s_addr,
          server->h_length);
 
     if (port < 0 ) {
-       connectedPort = NET_SERVER_PORT_NUM;  
+       serv_addr.sin_port = htons(NET_SERVER_PORT_NUM);
     } 
     else {
-       connectedPort = port;  
+       serv_addr.sin_port = htons(port);
     }
-    serv_addr.sin_port = htons(connectedPort);
+
 
     if (connect(sockfd,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) < 0) 
     {
-        //errno = 0;
-        //h_errno = HOST_NOT_FOUND;
         fprintf(stderr,"libnetfiles: cannot connect to %s, h_errno= %d\n", 
                 hostname, h_errno);
 	return -1;
     }
 
-    //printf("client getSockfd: sockfd %d connected to port %d\n", sockfd, connectedPort);
+    //printf("client getSockfd: sockfd %d connected to port %d\n", sockfd);
     return sockfd;
 }
 
 
 /////////////////////////////////////////////////////////////
 
-//int OldgetSockfd( const char * hostname )
-//{
-//    struct addrinfo hints;
-//    struct addrinfo *result = NULL;
-//    struct addrinfo *rp = NULL;
-//    int sfd = -1;
-//    int rc = 0;
-//
-//    memset(&hints, 0, sizeof(struct addrinfo));
-//    hints.ai_family = AF_UNSPEC;     /* Allow IPv4 or IPv6 */
-//    hints.ai_socktype = SOCK_STREAM; /* Stream socket */
-//    hints.ai_flags = AI_PASSIVE;     /* For wildcard IP address */
-//    hints.ai_protocol = 0;           /* Any protocol */
-//    hints.ai_canonname = NULL;
-//    hints.ai_addr = NULL;
-//    hints.ai_next = NULL;
-//
-//    //rc = getaddrinfo(hostname, NET_SERVER_PORT_NUM, &hints, &result);
-//    if (rc != 0) {
-//        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rc));
-//        return -1;
-//    }
-//
-//
-//    //
-//    // getaddrinfo() returns a list of address structures.
-//    // Try each address until we successfully bind(2).
-//    // If socket(2) (or bind(2)) fails, we (close the socket
-//    // and) try the next address. 
-//    //
-//
-//    for (rp = result; rp != NULL; rp = rp->ai_next) {
-//        sfd = socket(rp->ai_family, rp->ai_socktype,
-//                rp->ai_protocol);
-//        if (sfd == -1)
-//            continue;
-//
-//        if (bind(sfd, rp->ai_addr, rp->ai_addrlen) == 0)
-//            break;    // Success 
-//
-//        close(sfd);
-//    }
-//
-//    freeaddrinfo(result);   // No longer needed 
-//
-//    if (rp == NULL) 
-//    {   
-//        // No address succeeded 
-//        //fprintf(stderr, "Could not bind an address to the socket\n");
-//        return -1;
-//    }
-//
-//    return sfd;
-//}
-
-/////////////////////////////////////////////////////////////
 
 int isNetServerInitialized( NET_FUNCTION_TYPE iFunc )
 {
@@ -485,7 +401,6 @@ int netopen(const char *pathname, int flags)
     //
     // Get a socket to talk to my net file server
     //
-    //sockfd = getSockfd( gNetServer.hostname );
     sockfd = getSockfd( gNetServer.hostname, NET_SERVER_PORT_NUM );
     if ( sockfd < 0 ) {
         // this error should not happen
@@ -554,13 +469,13 @@ int netopen(const char *pathname, int flags)
   netclose needs to handle these error codes
 
        Required:
-           EABDF  =  9, Bad file number
 
        Optional:
            none
 
        Implemented:
-           none
+           EPERM  = 1, operation not permitted
+           EABDF  =  9, Bad file number
 
 ******************************************************/
 
@@ -588,7 +503,6 @@ int netclose(int netFd)
     //
     // Get a socket to talk to my net file server
     //
-    //sockfd = getSockfd( gNetServer.hostname );
     sockfd = getSockfd( gNetServer.hostname, NET_SERVER_PORT_NUM );
     if ( sockfd < 0 ) {
         // this error should not happen
@@ -659,16 +573,17 @@ int netclose(int netFd)
   netwrite needs to handle these error codes
 
        Required
-	   EBADF      =  9, Bad file number
-	   ECONNRESET = 104, connection reset by peer
            ETIMEOUT   = 110, connection timed out 
 
        Optional:
 	   none
 
        Implemented:
-           EPERM  =  1, Operation not permitted
-	   EINVAL = 22, Invalid argument
+           EPERM      =  1, Operation not permitted
+	   EBADF      =  9, Bad file number
+	   EACCES     = 14, Permission denied
+	   EINVAL     = 22, Invalid argument
+	   ECONNRESET = 104, connection reset by peer
 
 ******************************************************/
 
@@ -676,7 +591,7 @@ ssize_t netwrite(int netfd, const void *buf, size_t nbyte)
 {
     int fd     = -1;
     int sockfd = -1;
-    int rc     = 0;
+    int rc     =  0;
     char msg[MSG_SIZE] = "";
 
 
@@ -860,7 +775,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
         //fprintf(stderr, "netread: host not found, %s\n", hostname);
         return FAILURE;
     }
-    printf("client netread: sockfd= %d\n", sockfd);
+    //printf("client netread: sockfd= %d\n", sockfd);
 
 
     // 
@@ -872,7 +787,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
     bzero(msg, MSG_SIZE);
     sprintf(msg, "%d,%d,%d,0", NET_READ, netfd, nBytesWant);
 
-    printf("client netread: send to server - \"%s\"\n", msg);
+    //printf("client netread: send to server - \"%s\"\n", msg);
     rc = write(sockfd, msg, strlen(msg));
     if ( rc < 0 ) {
         // Failed to write command to server
@@ -880,7 +795,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
         return FAILURE;
     }
 
-    printf("client netread: waiting for response from server...\n");
+    //printf("client netread: waiting for response from server...\n");
 
     // 
     // Read the net response coming back from the server.
@@ -903,7 +818,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
     //
     // Received a response back from the server
     //
-    printf("client netread: received %d-byte msg from server - \"%s\"\n", rc, msg);
+    //printf("client netread: received %d-byte msg from server - \"%s\"\n", rc, msg);
 
 
     //
@@ -912,7 +827,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
     int fileSize = 0;
     int portCount = 0;
     sscanf(msg, "%d,%d,%d,%d,%d,%d,", &rc, &errno, &h_errno, &fd, &fileSize, &portCount);
-    printf("client netread: received fileSize= %d, portCount= %d\n", fileSize, portCount);
+    //printf("client netread: received fileSize= %d, portCount= %d\n", fileSize, portCount);
 
     if ( portCount > 0 ) {
         int ports[MAX_FILE_TRANSFER_SOCKETS]; 
@@ -923,7 +838,7 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
         {
             if ( i > 5 ) {
                 ports[i-6] = atoi(token);
-                printf("client netread: received ports[%d]= %d\n", i-6, ports[i-6]);
+                //printf("client netread: received ports[%d]= %d\n", i-6, ports[i-6]);
             }
             i++;
         }
@@ -958,19 +873,10 @@ ssize_t netread(int netfd, void *buf, size_t nbyte)
     close(sockfd);  // Don't need this socket anymore
 
 
-    // TODO 
-    // Recontruct all the bytes read from all the piece
-    // parts stored in a set of sequence files.  The
-    // final read data will be stored in "buf".
-
-
-
-
-
     //
     // Received a response back from the server 
     //
-    printf("client netread: received %d-byte msg from server - \"%s\"\n", rc, msg);
+    //printf("client netread: received %d-byte msg from server - \"%s\"\n", rc, msg);
 
 
     long nTotalBytes = 0;
@@ -1025,8 +931,8 @@ int xferStrategy(NET_FUNCTION_TYPE netFunc, const int netfd,
             iStartPos = iStartPos + DATA_CHUNK_SIZE;
         }
 
-        printf("client xferStrategy: netFunc= %d, part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
-             netFunc, part.port, part.netfd, part.seqNum, part.iStartPos, part.iLength);
+        //printf("client xferStrategy: netFunc= %d, part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
+        //     netFunc, part.port, part.netfd, part.seqNum, part.iStartPos, part.iLength);
 
         //
         // Spawn a thread to send or receive one part of the data
@@ -1051,13 +957,15 @@ int xferStrategy(NET_FUNCTION_TYPE netFunc, const int netfd,
     // wait for all spawned threads to finish
     int i;
     for (i=0; i < portCount; i++) {
-        printf("client xferStrategy: waiting for thread %d to finish\n", (int)tids[i]);
+        //printf("client xferStrategy: waiting for thread %d to finish\n", (int)tids[i]);
+        
         pthread_join(tids[i], NULL);
-        printf("client xferStrategy: thread %d finished\n", (int)tids[i]);
+
+        //printf("client xferStrategy: thread %d finished\n", (int)tids[i]);
     }
 
 
-    printf("client xferStrategy: reconstruct: buf= %s \n", buf);
+    //printf("client xferStrategy: buf= %s \n", buf);
 
     return 0;
 }
@@ -1145,11 +1053,6 @@ void *sendData( void *filePart )
     // Send nBytes of data to the server
     //
 
-//char sTemp[4096] = "";
-//bzero(sTemp, 4096);
-//strncpy(sTemp, &(part.buf[part.iStartPos]), part.iLength);
-//printf("client netwrite: data= \"%s\"\n", sTemp);
- 
     rc = write(sockfd, &(part.buf[part.iStartPos]), part.iLength);
     if ( rc < 0 ) {
         // Failed to write data to server
@@ -1207,8 +1110,8 @@ void *getData( void *filePart )
 
     free(filePart);
 
-    printf("client netread: getData thread %ld: Part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
-             pthread_self(), part.port, part.netfd, part.seqNum, part.iStartPos, part.iLength);
+    //printf("client netread: getData thread %ld: Part: port= %d, netfd= %d, seqNum= %d, iStartPos= %d, iLength= %d\n",
+    //         pthread_self(), part.port, part.netfd, part.seqNum, part.iStartPos, part.iLength);
 
 
     // 
@@ -1225,8 +1128,8 @@ void *getData( void *filePart )
         rc = FAILURE;
         pthread_exit( &rc );
     }
-    printf("client netread: getData thread %d: sockfd= %d, port= %d\n", 
-              (int)pthread_self(), sockfd, part.port);
+    //printf("client netread: getData thread %d: sockfd= %d, port= %d\n", 
+    //          (int)pthread_self(), sockfd, part.port);
 
 
 
@@ -1239,7 +1142,7 @@ void *getData( void *filePart )
     bzero(msg, MSG_SIZE);
     sprintf(msg, "%d,%d,%d,%d,%d", NET_READ, part.netfd, part.seqNum, part.iStartPos, part.iLength);
 
-    printf("client netread: getData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
+    //printf("client netread: getData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
     rc = write(sockfd, msg, strlen(msg));
     if ( rc < 0 ) {
         // Failed to write command to server
@@ -1264,17 +1167,21 @@ void *getData( void *filePart )
         pthread_exit( &rc );
     }
     int iBytesRecv = rc;
-    printf("client netread: getData thread %d: received %d bytes of data from server\n",(int)pthread_self(),rc);
+    //printf("client netread: getData thread %d: received %d bytes of data from server\n",(int)pthread_self(),rc);
 
 
-    // return the data read from server 
     //
-    printf("client netread: getData thread %d: seqNum= %d\n",(int)pthread_self(), part.seqNum);
+    // Return data read from server.  The caller of this "libnetfiles" library
+    // gave me a char pointer, "buf", to return data I read from the server.  
+    // Here, I will write out the data one byte at a time to "buf".
+    //
+    //
+    //printf("client netread: getData thread %d: seqNum= %d\n",(int)pthread_self(), part.seqNum);
     int k = part.iStartPos;
     int i = 0;
     for (i=0; i < iBytesRecv; i++) {
          part.buf[k] = msg[i];
-         printf("client netread: getData thread %d: buf[%d]=%c\n",(int)pthread_self(), k, part.buf[k]);
+         //printf("client netread: getData thread %d: buf[%d]=%c\n",(int)pthread_self(), k, part.buf[k]);
          k++;
     }
 
@@ -1287,7 +1194,7 @@ void *getData( void *filePart )
     bzero(msg, MSG_SIZE);
     sprintf(msg, "%d,%d,%d,%d", SUCCESS, errno, h_errno, iBytesRecv);
 
-    printf("client netread: getData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
+    //printf("client netread: getData thread %d: send to server - \"%s\"\n",(int)pthread_self(),msg);
     rc = write(sockfd, msg, strlen(msg));
     if ( rc < 0 ) {
         // Failed to write command to server

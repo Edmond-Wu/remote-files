@@ -28,7 +28,7 @@
 //
 // Max size of the file descriptor table.  
 //
-#define FD_TABLE_SIZE   32  
+#define FD_TABLE_SIZE   128  
 
 
 //
@@ -41,6 +41,7 @@
 //
 // Number of sockets available to use for file transfer
 //
+//
 #define MAX_FILE_TRANSFER_SOCKETS   10  
 
 
@@ -51,8 +52,8 @@
 // used to calculate how many listener ports are needed 
 // to faciliate a net file read or write. 
 //
-//#define DATA_CHUNK_SIZE   2048  
-#define DATA_CHUNK_SIZE   20  
+//
+#define DATA_CHUNK_SIZE   2048  
 
 
 
