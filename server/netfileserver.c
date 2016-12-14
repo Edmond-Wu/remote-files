@@ -36,7 +36,7 @@ typedef struct {
 } FILE_TRANSFER_SOCKET_TYPE;
 
 typedef struct QNode {
-	int tid;
+	int file_descriptor;
 	struct QNode *next;
 } QNode;
 
@@ -55,8 +55,8 @@ int findOpenPorts();
 //
 //Queue stuff
 //
-QNode* createQNode(int id);
-void enqueue(int id);
+QNode* createQNode(int fd);
+void enqueue(int fd);
 QNode* dequeue();
 
 
@@ -249,8 +249,8 @@ int main(int argc, char *argv[])
             // to spawn a worker thread to handle this request.
             //
             //printf("netfileserver: listener accepted a new request from socket\n");
-	    int thread_id = pthread_create(&ProcessNetCmd_threadID, NULL, &ProcessNetCmd, &newsockfd );
-	    enqueue(thread_id);
+	    pthread_create(&ProcessNetCmd_threadID, NULL, &ProcessNetCmd, &newsockfd);
+	    
 
             //printf("netfileserver: listener spawned a new worker thread with ID %d\n",ProcessNetCmd_threadID);
         };
@@ -275,15 +275,15 @@ int main(int argc, char *argv[])
 
 /////////////////////////////////////////////////////////////
 //Queue functons
-QNode* createQNode(int id) {
+QNode* createQNode(int fd) {
 	QNode *node = malloc(sizeof(QNode));
-	node->tid = id;
+	node->file_descriptor = fd;
 	node->next = NULL;
 	return node;
 }
 
-void enqueue(int id) {
-	QNode *added = createQNode(id);
+void enqueue(int fd) {
+	QNode *added = createQNode(fd);
 	if (queue == NULL) {
 		queue = added;
 		queue_size = 1;
@@ -443,11 +443,7 @@ void *ProcessNetCmd( void *newSocket_FD )
         if ( *sockfd != 0 ) close(*sockfd);
 	pthread_exit( NULL );
     }
-    else
-    {
-        //printf("%s received \"%s\"\n", myThreadLabel, msg);
-    }
-
+    
 
     //
     // Decode the incoming message.  Find out which
