@@ -1325,7 +1325,6 @@ int canOpen( NET_FD_TYPE *newFd )
     // for the pathname.
     //
     for (i=0; i < FD_TABLE_SIZE; i++) {
-
         if (strcmp(FD_Table[i].pathname, newFd->pathname) == 0)
         {
             //
@@ -1346,6 +1345,7 @@ int canOpen( NET_FD_TYPE *newFd )
                     // For transaction mode, that means this file must
                     // not be opened by another client for any reason.
                     //
+        	    enqueue(newFd->fd);
                     return FALSE;  // Already opened by another client
                     break;
 
