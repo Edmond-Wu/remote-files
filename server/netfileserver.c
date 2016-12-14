@@ -38,15 +38,6 @@ typedef struct {
     NET_FD_TYPE netFd;
 } FILE_TRANSFER_SOCKET_TYPE;
 
-//queue data structure for extensions C and D
-typedef struct QNode {
-	int tid;
-	struct QNode *next;
-} QNode;
-
-//global queue node to keep track of process queue
-QNode *queue = NULL;
-
 
 /////////////////////////////////////////////////////////////
 //
@@ -54,11 +45,6 @@ QNode *queue = NULL;
 //
 /////////////////////////////////////////////////////////////
 
-QNode* createQNode(int id);
-void enqueue(int id);
-int dequeue();
-
-//////////////////////////////////////////////////////////////
 void initialize();
 static void sig_handler( const int signo );
 static void SetupSignals();
@@ -66,30 +52,30 @@ int getSockfd( const int port ); // create a socket binded to a port
 int findOpenPorts();
 
 
-// 
+//
 // Functions for processing commands sent by client
-// 
+//
 void *ProcessNetCmd( void *newSocket_FD );
 
 
-// 
+//
 // Functions for processing "netopen"
-// 
+//
 int Do_netopen( NET_FD_TYPE *netFd );
 
 
-// 
+//
 // Functions for processing "netwrite"
-// 
+//
 int Do_netwrite( const int nBytes, pthread_t *pTids, int *portCount, char *portList );
 void *netwriteListener( void *sockfd );
 int savePartfile( int netfd, int seqNum, char *data, int nBytes);
 int reconstruct( const int netfd, const int parts);
 
 
-// 
+//
 // Functions for processing "netread"
-// 
+//
 int Do_netread( const int nBytesWant, const int fileSize, pthread_t *pTids, int *portCount, char *portList );
 void *netreadListener( void *sockfd );
 char *readFile( const int netfd, const int iStartPos, const int iBytesWanted);
@@ -129,38 +115,8 @@ pthread_t HB_thread_ID = 0;
 //
 NET_FD_TYPE   FD_Table[ FD_TABLE_SIZE ];
 
-//queue operations
-//creating queue node
-QNode* createQNode(int id) {
-	QNode *node = malloc(sizeof(QNode));
-	node->tid = id;
-	node->next = NULL;
-	return node;
-}
 
-//enqueuing a node
-void enqueue(int id) {
-	QNode *node = createQNode(id);
-	if (queue == NULL) {
-		queue = node;
-		return;
-	}
-	QNode *ptr = queue;
-	while (ptr->next != NULL) {
-		ptr = ptr->next;
-	}
-	ptr->next = node;
-}
-	
-//dequeues
-int dequeue() {
-	QNode *old_front = queue;
-	QNode *next_in_line = queue->next;
-	int id = old_front->tid;
-	queue = next_in_line;
-	free(old_front);
-	return id;
-}
+
 
 /////////////////////////////////////////////////////////////
 
@@ -228,6 +184,11 @@ int main(int argc, char *argv[])
         close(sockfd);
         exit(EXIT_FAILURE);
     }
+    else
+    {
+        //printf("netfileserver: listener is listening on socket %d\n", sockfd);
+    }
+
 
     //
     // Start the listener to listen for incoming requests from
@@ -316,17 +277,17 @@ static void sig_handler( const int signo )
     switch ( signo )
     {
     case SIGINT:
-    	printf("netfileserver: sig_handler caught SIGINT\n");
+    	printf("nerfileserver: sig_handler caught SIGINT\n");
     	bTerminate = TRUE;
     	break;
 
     case SIGTERM:
-    	printf("netfileserver: sig_handler caught SIGTERM\n");
+    	printf("nerfileserver: sig_handler caught SIGTERM\n");
     	bTerminate = TRUE;
     	break;
 
     case SIGALRM:
-    	printf("netfileserver: sig_handler caught SIGALRM");
+    	printf("nerfileserver: sig_handler caught SIGALRM");
 
     	//
     	// SIGALRM is my alarm timer
@@ -344,7 +305,7 @@ static void sig_handler( const int signo )
     			// We do not have a heart beat thread running
     			// at this time.  Start it up now.
     			//
-    			printf("netfileserver: sig_handler creating a new heart beat thread\n");
+    			printf("nerfileserver: sig_handler creating a new heart beat thread\n");
     			//rc = pthread_create(&HB_thread_ID, NULL, HeartBeat, (void *)NULL );
     			//WriteLogInt("sig_handler(): pthread_create returns",rc,LOG_INFO);
     			//WriteLogInt("sig_handler(): HB thread ID =",HB_thread_ID,LOG_INFO);
@@ -360,7 +321,7 @@ static void sig_handler( const int signo )
     			// signal again.  It must be hung.  Time to restart
     			// my daemon listener thread.
     			//
-    			printf("netfileserver: sig_handler cancelling heart beat thread\n");
+    			printf("nerfileserver: sig_handler cancelling heart beat thread\n");
     			//rc = pthread_cancel( HB_thread_ID );
     			//printf("sig_handler: pthread_cancel returns",rc);
 
@@ -375,7 +336,7 @@ static void sig_handler( const int signo )
     	//
     	// We received a signal that we don't know how to handle
     	//
-    	printf("netfileserver: sig_handler caught unhandled signal %d\n", signo);
+    	printf("nerfileserver: sig_handler caught unhandled signal %d\n", signo);
     	break;
 
     }; // end of the switch statement
@@ -607,7 +568,7 @@ void *ProcessNetCmd( void *newSocket_FD )
 		int i;
 		for (i=0; i < filePartsCount; i++) {
 		    pthread_join(pTids[i], (void **)&nBytesRecv);
-		    //printf("%s netreadListener thread %ld finished, nBytesRecv= %d\n", 
+		    //printf("%s netreadListener thread %ld finished, nBytesRecv= %d\n",
 		    //            myThreadLabel, pTids[i], (int)(*nBytesRecv));
 
                     //
@@ -677,7 +638,7 @@ void *ProcessNetCmd( void *newSocket_FD )
 		}
 		else {
 		    //
-		    // create an empty file.  
+		    // create an empty file.
 		    //
 		    NET_FD_TYPE *pFD = LookupFDtable(netfd);
 		    FILE *fp = fopen(pFD->pathname,"w");
@@ -692,7 +653,7 @@ void *ProcessNetCmd( void *newSocket_FD )
 		    portCount = 0;
 		    sprintf(portList, "%d", portCount);
 		    rc = SUCCESS;
-		} 
+		}
 	    }  // Execute the netwrite function
 
 	    //
@@ -797,7 +758,7 @@ void *ProcessNetCmd( void *newSocket_FD )
 	case INVALID:
 	default:
 	    //printf("%s received invalid net function\n", myThreadLabel);
-	    errno = EINVAL;  
+	    errno = EINVAL;
 	    rc = FAILURE;
 	    sprintf(msg, "%d,%d,%d,0", FAILURE, errno, h_errno);
 	    break;
@@ -822,28 +783,6 @@ void *ProcessNetCmd( void *newSocket_FD )
 int Do_netopen( NET_FD_TYPE *newFd )
 {
     int rc = -1;
-
-    //
-    // Try to find this "fd" in my FD table that has the exact
-    // file access mode and open flags.  If found, this file 
-    // has already been opened in this way before.  I can 
-    // continue to use this "fd" to access the specified file.  
-    //
-    // The matchFD function returns an index number to the 
-    // specified exact match "fd" in my FD table.
-    //
-    int i = -1;
-    i = matchFD(newFd);
-    if ( i >= 0 ) {
-        // Found the file descriptor.  This file has already 
-        // been opened before.
-        //
-        //printFDtable();
-        //
-
-        return FD_Table[i].fd;  // This is the file descriptor
-    }
-
 
     //
     // Verify the specified file exists and accessible
@@ -1031,13 +970,13 @@ int Do_netread( const int nBytesWant, const int fileSize, pthread_t *pTids, int 
         // Want more bytes than fileSize
         iBytesForRead = fileSize;
     }
-    
+
 
 
     //
     // Step 2: Calculate the number of ports need to read
     //         "iBytesForRead" bytes of data from this file.
-    //         Each port will handle one part of the data file.  
+    //         Each port will handle one part of the data file.
     //         So, portCount also represents the total number
     //         of file parts count.
     //
@@ -1166,7 +1105,7 @@ int getSockfd( const int port )
         if ( errno == EADDRINUSE ) {
             //fprintf(stderr,"netfileserver: port %d already in use, errno= %d\n",
             //          port, errno);
-            errno = 0;            
+            errno = 0;
         }
         return FAILURE;
     }
@@ -1382,7 +1321,7 @@ int canOpen( NET_FD_TYPE *newFd )
                     //
                     return FALSE;  // Already opened by another client
                     break;
-        
+
                 case EXCLUSIVE_MODE:
                 case UNRESTRICTED_MODE:
                     //
@@ -1396,7 +1335,7 @@ int canOpen( NET_FD_TYPE *newFd )
                         case O_RDONLY:
                             // Allow to open
                             break;
-         
+
                         case O_WRONLY:
                         case O_RDWR:
                             if ((fc == EXCLUSIVE_MODE) && (oFlag != O_RDONLY))
@@ -1410,7 +1349,7 @@ int canOpen( NET_FD_TYPE *newFd )
                      return FALSE;
                      break;
 
-            } // Switch on new wanted connection mode 
+            } // Switch on new wanted connection mode
 
         }  // Found the pathname in FD_Table
 
@@ -1491,8 +1430,8 @@ int canRead( const int netfd, const int nBytesWant, int *fileSize)
         return FAILURE;
     }
 
-    // 
-    // Get the file size 
+    //
+    // Get the file size
     //
     FILE *fpRead = NULL;
 
@@ -1524,7 +1463,7 @@ int canRead( const int netfd, const int nBytesWant, int *fileSize)
 void *netwriteListener( void *sfd )
 {
     const int sockfd = *((int *)sfd);
-    
+
     int newsockfd = 0;
     struct sockaddr_in  cli_addr;
     int clilen = sizeof(cli_addr);
@@ -1814,7 +1753,7 @@ int reconstruct( const int netfd, const int parts)
 void *netreadListener( void *sfd )
 {
     const int sockfd = *((int *)sfd);
-    
+
     int newsockfd = 0;
     struct sockaddr_in  cli_addr;
     int clilen = sizeof(cli_addr);
@@ -1870,7 +1809,7 @@ void *netreadListener( void *sfd )
 
 
     //
-    // read "nBytes" of data starting at position "iStartPos" 
+    // read "nBytes" of data starting at position "iStartPos"
     // from the file referred to as "netfd"
     //
     char *pData = NULL;
@@ -1936,7 +1875,7 @@ char *readFile( const int netfd, const int iStartPos, const int iBytesWanted)
     FILE *fpRead = NULL;
     char *pData  = NULL;
 
-    
+
     if ((iStartPos <0) || (iBytesWanted <=0)) return NULL;
 
     // Find the file to read from
@@ -1956,7 +1895,7 @@ char *readFile( const int netfd, const int iStartPos, const int iBytesWanted)
 
 
     //
-    // Set the file position to "iStartPos" relative 
+    // Set the file position to "iStartPos" relative
     // to the beginning of the file.
     //
     if (fseek(fpRead, iStartPos, SEEK_SET) == 0) {
@@ -1983,6 +1922,3 @@ char *readFile( const int netfd, const int iStartPos, const int iBytesWanted)
     if (fpRead != NULL) fclose(fpRead);
     return NULL;
 }
-
-
-
