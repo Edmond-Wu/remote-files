@@ -57,7 +57,7 @@ int findOpenPorts();
 //
 QNode* createQNode(int fd);
 void enqueue(int fd);
-QNode* dequeue();
+int dequeue();
 
 
 //
@@ -95,6 +95,7 @@ char *readFile( const int netfd, const int iStartPos, const int iBytesWanted);
 int matchFD( NET_FD_TYPE *netFd );
 int createFD( NET_FD_TYPE *netFd );
 int deleteFD( int fd );
+int tableFull();
 NET_FD_TYPE *LookupFDtable( const int netfd );
 void printFDtable();
 
@@ -129,8 +130,7 @@ NET_FD_TYPE   FD_Table[ FD_TABLE_SIZE ];
 
 /////////////////////////////////////////////////////////////
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     int sockfd  = 0;
     int sockOpt = 1;
     int newsockfd = 0;
@@ -159,10 +159,9 @@ int main(int argc, char *argv[])
     }
 
     rc = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &sockOpt, sizeof(sockOpt));
-    if (rc != 0)
-    {
+    if (rc != 0) {
         fprintf(stderr,"netfileserver: setsockopt() returned %d, errno= %d\n", rc, errno);
-    };
+    }
 
     //
     // Initialize the server address structure to be
@@ -296,11 +295,20 @@ void enqueue(int fd) {
 	queue_size++;
 }
 
-QNode* dequeue() {
+int dequeue() {
+	if (queue == NULL)
+		return FAILURE;
+	int fd = queue->file_descriptor;
+	if (queue->next == NULL) {
+		free(queue);
+		queue = NULL;
+		return fd;
+	}
 	QNode* dequeued = queue;
 	queue = queue->next;
 	queue_size--;
-	return dequeued;
+	free(dequeued);
+	return fd;
 }
 
 static void sig_handler( const int signo )
@@ -1295,6 +1303,20 @@ int deleteFD( int fd )
     //printFDtable();
     errno = EBADF;
     return FAILURE;
+}
+
+/////////////////////////////////////////////////////////////
+
+int tableFull() {
+	int full = 1; //true initially
+	int i;
+	for (i = 0; i < FD_TABLE_SIZE; i++) {
+		if (FD_Table[i].pathname == '\0') {
+			full = 0;
+			return full;
+		}
+	}
+	return full;
 }
 
 /////////////////////////////////////////////////////////////
